@@ -1,3 +1,35 @@
+# Stanford-CS349D-MLSys
+
+Stanford CS349D Machine Learning Systems (AI Inference Infrastructure) final project 
+
+## Update upstream from course repo
+
+Upstream repo: [git@github.com:stanford-mast/CS349D-miniengine.git](git@github.com:stanford-mast/CS349D-miniengine.git) or [https://github.com/stanford-mast/CS349D-miniengine.git](https://github.com/stanford-mast/CS349D-miniengine.git)
+
+```bash
+git checkout upstream-main
+
+git fetch upstream
+git reset --hard upstream/main
+# Or just
+git pull upstream main
+
+git push --force-with-lease origin upstream-main
+
+```
+
+## Merge upstream into main
+
+We don't want linear history, merge will be fine.
+
+```bash
+git checkout main
+git merge upstream-main
+git push origin main
+```
+
+---
+
 # MiniEngine
 
 A minimal LLM serving engine for educational purposes, inspired by [mini-sglang](https://github.com/sgl-project/mini-sglang).
