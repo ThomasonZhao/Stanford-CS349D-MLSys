@@ -4,7 +4,7 @@ Stanford CS349D Machine Learning Systems (AI Inference Infrastructure) final pro
 
 ## Update upstream from course repo
 
-Upstream repo: [git@github.com:stanford-mast/CS349D-miniengine.git](git@github.com:stanford-mast/CS349D-miniengine.git) or [https://github.com/stanford-mast/CS349D-miniengine.git](https://github.com/stanford-mast/CS349D-miniengine.git)
+Upstream repo: `git@github.com:stanford-mast/CS349D-miniengine.git` or `https://github.com/stanford-mast/CS349D-miniengine.git`
 
 ```bash
 git checkout upstream-main
