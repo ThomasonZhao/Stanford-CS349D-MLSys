@@ -29,7 +29,11 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     """
-    Naive FCFS scheduler — processes requests one at a time.
+    FCFS scheduler with static batching.
+
+    Each step admits up to `max_running` requests from the waiting queue,
+    prefills them individually, then repeatedly batched-decodes the whole
+    group until every request in the batch has finished.
 
     Public API (thread-safe):
         add_request(req)   — enqueue a new request
@@ -101,75 +105,6 @@ class Scheduler:
 
     def step(self) -> list[Request]:
         """
-        One scheduling iteration — maximally naive.
-
-        Takes one request from the waiting queue, prefills it, and decodes
-        it to completion before moving on to the next request.  No batching,
-        no interleaving.
-
-        Returns list of requests that finished in this step.
-        """
-        finished: list[Request] = []
-
-        # ── Pick one request ────────────────────────────────────────────
-        with self._lock:
-            if not self.waiting:
-                return finished
-            req = self.waiting.popleft()
-
-        # ── Prefill ─────────────────────────────────────────────────────
-        req.status = RequestStatus.RUNNING
-        token_id = self.engine.prefill(req)
-        req.output_ids.append(token_id)
-        self._stream_token(req, token_id)
-
-        # ── Decode until finished ───────────────────────────────────────
-        while not self._check_finished(req, token_id):
-            token_id = self.engine.decode_step(req)
-            req.output_ids.append(token_id)
-            self._stream_token(req, token_id)
-
-        self._finish_request(req, finished)
-        return finished
-
-    # ── Helpers ─────────────────────────────────────────────────────────
-
-    def _check_finished(self, req: Request, token_id: int) -> bool:
-        """Decide whether a request should stop generating."""
-        if req.is_finished:
-            return True
-        if self.engine.is_stop_token(token_id):
-            return True
-        return False
-
-    def _stream_token(self, req: Request, token_id: int) -> None:
-        """Push a generated token into the request's streaming queue."""
-        text = self.engine.decode_token(token_id)
-        req.token_queue.put(TokenOutput(token_id=token_id, token_text=text, finished=False))
-
-    def _finish_request(self, req: Request, finished_list: list[Request]) -> None:
-        """Mark a request as finished and free its resources."""
-        req.status = RequestStatus.FINISHED
-        req.kv_cache = None  # release GPU memory
-        req.token_queue.put(TokenOutput(token_id=-1, token_text="", finished=True))
-        finished_list.append(req)
-
-        self.total_finished += 1
-        self.total_generated_tokens += req.num_output_tokens
-        logger.info(
-            "Finished request %s  (output_len=%d, running=%d, waiting=%d)",
-            req.request_id,
-            req.num_output_tokens,
-            len(self.running),
-            len(self.waiting),
-        )
-
-class BatchedScheduler(Scheduler):
-    def __init__(self, engine: Engine, max_running: int = 16):
-        super().__init__(engine, max_running)
-
-    def step(self) -> list[Request]:
-        """
         One scheduling iteration (static batching).
 
         Admits up to max_running requests from the waiting queue, prefills
@@ -210,6 +145,21 @@ class BatchedScheduler(Scheduler):
 
         return finished
 
+    # ── Helpers ─────────────────────────────────────────────────────────
+
+    def _check_finished(self, req: Request, token_id: int) -> bool:
+        """Decide whether a request should stop generating."""
+        if req.is_finished:
+            return True
+        if self.engine.is_stop_token(token_id):
+            return True
+        return False
+
+    def _stream_token(self, req: Request, token_id: int) -> None:
+        """Push a generated token into the request's streaming queue."""
+        text = self.engine.decode_token(token_id)
+        req.token_queue.put(TokenOutput(token_id=token_id, token_text=text, finished=False))
+
     def _retire_finished(
         self, batch: list[Request], finished: list[Request]
     ) -> list[Request]:
@@ -221,3 +171,20 @@ class BatchedScheduler(Scheduler):
             else:
                 still_running.append(req)
         return still_running
+
+    def _finish_request(self, req: Request, finished_list: list[Request]) -> None:
+        """Mark a request as finished and free its resources."""
+        req.status = RequestStatus.FINISHED
+        req.kv_cache = None  # release GPU memory
+        req.token_queue.put(TokenOutput(token_id=-1, token_text="", finished=True))
+        finished_list.append(req)
+
+        self.total_finished += 1
+        self.total_generated_tokens += req.num_output_tokens
+        logger.info(
+            "Finished request %s  (output_len=%d, running=%d, waiting=%d)",
+            req.request_id,
+            req.num_output_tokens,
+            len(self.running),
+            len(self.waiting),
+        )
