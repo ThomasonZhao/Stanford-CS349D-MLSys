@@ -163,3 +163,43 @@ class Scheduler:
             len(self.running),
             len(self.waiting),
         )
+
+class BatchedScheduler(Scheduler):
+    def __init__(self, engine: Engine, max_running: int = 16):
+        super().__init__(engine, max_running)
+
+    def batched_decode(self, requests):
+        pass
+
+    def step(self) -> list[Request]:
+        """
+        One scheduling iteration.
+
+        Takes up to max_running request from the waiting queue, prefills them one by one, and decodes
+        them to completion before moving on to the next batch of requests.
+
+        Returns list of requests that finished in this step.
+        """
+        finished: list[Request] = []
+
+        # ── Pick max_running requests ────────────────────────────────────────────
+        with self._lock:
+            requests = []
+            while self.waiting and len(requests) < self.max_running:
+                req = self.waiting.popleft()
+                requests.append(req)
+
+        # ── Prefill ─────────────────────────────────────────────────────
+        for req in requests:
+            req.status = RequestStatus.RUNNING
+            token_id = self.engine.prefill(req)
+            req.output_ids.append(token_id)
+            self._stream_token(req, token_id)
+
+        # ── Decode until finished ───────────────────────────────────────
+        self.batched_decode(requests)
+
+        for req in requests:
+            self._finish_request(req, finished)
+
+        return finished
