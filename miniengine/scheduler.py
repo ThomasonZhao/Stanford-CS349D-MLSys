@@ -170,39 +170,54 @@ class BatchedScheduler(Scheduler):
 
     def step(self) -> list[Request]:
         """
-        One scheduling iteration.
+        One scheduling iteration (static batching).
 
-        Takes up to max_running request from the waiting queue, prefills them one by one, and decodes
-        them to completion before moving on to the next batch of requests.
+        Admits up to max_running requests from the waiting queue, prefills
+        them one by one, then repeatedly batched-decodes the whole group
+        until every request in the batch has finished.
 
         Returns list of requests that finished in this step.
         """
         finished: list[Request] = []
 
-        # ── Pick max_running requests ────────────────────────────────────────────
+        # ── Admit up to max_running requests ────────────────────────────
         with self._lock:
             while self.waiting and len(self.running) < self.max_running:
-                req = self.waiting.popleft()
-                self.running.append(req)
+                self.running.append(self.waiting.popleft())
 
-        # ── Prefill ─────────────────────────────────────────────────────
+        if not self.running:
+            return finished
+
+        # ── Prefill (unbatched) ─────────────────────────────────────────
         for req in self.running:
             req.status = RequestStatus.RUNNING
             token_id = self.engine.prefill(req)
             req.output_ids.append(token_id)
             self._stream_token(req, token_id)
 
-        # ── Decode until finished ───────────────────────────────────────
+        # Drop requests that already finished on the first sampled token
+        # (e.g. immediate stop token or max_new_tokens == 1) so we don't
+        # waste a decode pass on them.
+        self.running = self._retire_finished(self.running, finished)
+
+        # ── Batched decode until the batch drains ───────────────────────
         while self.running:
             tokens = self.engine.batched_decode(self.running)
-            
-            not_finished = []
             for req, tok in zip(self.running, tokens):
                 req.output_ids.append(tok)
                 self._stream_token(req, tok)
-                if self._check_finished(req, tok):
-                    self._finish_request(req, finished)
-                else:
-                    not_finished.append(req)
-            self.running = not_finished
+            self.running = self._retire_finished(self.running, finished)
+
         return finished
+
+    def _retire_finished(
+        self, batch: list[Request], finished: list[Request]
+    ) -> list[Request]:
+        """Split `batch` into still-running and finished; retire the latter."""
+        still_running: list[Request] = []
+        for req in batch:
+            if self._check_finished(req, req.output_ids[-1]):
+                self._finish_request(req, finished)
+            else:
+                still_running.append(req)
+        return still_running
