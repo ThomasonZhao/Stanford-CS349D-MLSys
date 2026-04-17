@@ -168,18 +168,35 @@ class Engine:
     
     @torch.inference_mode()
     def batched_decode(self, requests: list[Request]) -> list[int]:
+        """
+        Run one decode step for a batch of already-prefilled requests.
+
+        Pads each request's KV cache to the batch's max length, runs one
+        batched forward pass with an attention mask that ignores padding,
+        unpacks the per-request KV caches, and samples one token per
+        request.
+
+        Returns the next token id for each request, in input order.
+        """
         B = len(requests)
         num_layers = len(requests[0].kv_cache)
+        # Per-request cache length, read from layer 0's K seq dim.
         cache_lens = [request.kv_cache[0][0].shape[2] for request in requests]
         max_cache_len = max(cache_lens)
 
+        # ── 1. Stack the last generated token from each request ────────
         input_ids = torch.tensor(
-            [[request.output_ids[-1]] for request in requests], dtype=torch.long, device=self.device
+            [[request.output_ids[-1]] for request in requests],
+            dtype=torch.long,
+            device=self.device,
         )
+
+        # ── 2. Per-request RoPE positions = each request's own cache_len
         position_ids = torch.tensor(
             [[L] for L in cache_lens], dtype=torch.long, device=self.device
         )
 
+        # ── 3. Pad each KV to max_cache_len and stack along batch dim ──
         padded_caches = []
         for layer in range(num_layers):
             ks, vs = [], []
@@ -192,7 +209,8 @@ class Engine:
                 ks.append(k)
                 vs.append(v)
             padded_caches.append((torch.cat(ks, 0), torch.cat(vs, 0)))
-        
+
+        # ── 4. Build the attention mask ────────────────────────────────
         total_cache_len = max_cache_len + 1
         arange = torch.arange(total_cache_len, device=self.device)
         cache_lens_t = torch.tensor(cache_lens, device=self.device)
@@ -200,22 +218,33 @@ class Engine:
         valid[:, -1] = True                                # new decode token always valid
         attn_mask = valid.view(B, 1, 1, total_cache_len)
 
+        # ── 5. Single batched forward pass ─────────────────────────────
         logits, new_caches = self.model(
-            input_ids, position_ids, kv_caches=padded_caches, attention_mask=attn_mask,
+            input_ids,
+            position_ids,
+            kv_caches=padded_caches,
+            attention_mask=attn_mask,
         )
 
+        # ── 6. Unpad per-request KV caches and store back ──────────────
         for i, (request, L) in enumerate(zip(requests, cache_lens)):
             new_kv_per_req = []
             for layer in range(num_layers):
                 K, V = new_caches[layer]
                 old_k, old_v = K[i:i+1, :, :L, :], V[i:i+1, :, :L, :]
-                new_k, new_v = K[i:i+1, :, -1:, :],  V[i:i+1, :, -1:, :]
-                new_kv_per_req.append((torch.cat([old_k, new_k], 2),
-                                    torch.cat([old_v, new_v], 2)))
+                new_k, new_v = K[i:i+1, :, -1:, :], V[i:i+1, :, -1:, :]
+                new_kv_per_req.append((
+                    torch.cat([old_k, new_k], dim=2),
+                    torch.cat([old_v, new_v], dim=2),
+                ))
             request.kv_cache = new_kv_per_req
 
+        # ── 7. Sample one token per request from its row of logits ─────
         return [
-            sample_token(logits[i, -1, :], request.sampling_params, request.output_ids) for i, request in enumerate(requests)
+            sample_token(
+                logits[i, -1, :], request.sampling_params, request.output_ids
+            )
+            for i, request in enumerate(requests)
         ]
 
     def is_stop_token(self, token_id: int) -> bool:
