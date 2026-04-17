@@ -24,6 +24,7 @@ import logging
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from transformers import AutoTokenizer
 
 from miniengine.core import Request
@@ -164,6 +165,58 @@ class Engine:
         return sample_token(
             logits[:, -1, :], request.sampling_params, request.output_ids
         )
+    
+    @torch.inference_mode()
+    def batched_decode(self, requests: list[Request]) -> list[int]:
+        B = len(requests)
+        num_layers = len(requests[0].kv_cache)
+        cache_lens = [request.kv_cache[0][0].shape[2] for request in requests]
+        max_cache_len = max(cache_lens)
+
+        input_ids = torch.tensor(
+            [[request.output_ids[-1]] for request in requests], dtype=torch.long, device=self.device
+        )
+        position_ids = torch.tensor(
+            [[L] for L in cache_lens], dtype=torch.long, device=self.device
+        )
+
+        padded_caches = []
+        for layer in range(num_layers):
+            ks, vs = [], []
+            for req, L in zip(requests, cache_lens):
+                k, v = req.kv_cache[layer]
+                pad = max_cache_len - L
+                if pad:
+                    k = F.pad(k, (0, 0, 0, pad))
+                    v = F.pad(v, (0, 0, 0, pad))
+                ks.append(k)
+                vs.append(v)
+            padded_caches.append((torch.cat(ks, 0), torch.cat(vs, 0)))
+        
+        total_cache_len = max_cache_len + 1
+        arange = torch.arange(total_cache_len, device=self.device)
+        cache_lens_t = torch.tensor(cache_lens, device=self.device)
+        valid = arange[None, :] < cache_lens_t[:, None]   # (B, total_cache_len)
+        valid[:, -1] = True                                # new decode token always valid
+        attn_mask = valid.view(B, 1, 1, total_cache_len)
+
+        logits, new_caches = self.model(
+            input_ids, position_ids, kv_caches=padded_caches, attention_mask=attn_mask,
+        )
+
+        for i, (request, L) in enumerate(zip(requests, cache_lens)):
+            new_kv_per_req = []
+            for layer in range(num_layers):
+                K, V = new_caches[layer]
+                old_k, old_v = K[i:i+1, :, :L, :], V[i:i+1, :, :L, :]
+                new_k, new_v = K[i:i+1, :, -1:, :],  V[i:i+1, :, -1:, :]
+                new_kv_per_req.append((torch.cat([old_k, new_k], 2),
+                                    torch.cat([old_v, new_v], 2)))
+            request.kv_cache = new_kv_per_req
+
+        return [
+            sample_token(logits[i, -1, :], request.sampling_params, request.output_ids) for i, request in enumerate(requests)
+        ]
 
     def is_stop_token(self, token_id: int) -> bool:
         return token_id in self.stop_token_ids
