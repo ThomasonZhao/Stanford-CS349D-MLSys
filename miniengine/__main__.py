@@ -15,7 +15,7 @@ import torch
 import uvicorn
 
 from miniengine.engine import Engine
-from miniengine.scheduler import Scheduler
+from miniengine.scheduler import BatchedScheduler
 from miniengine import server as srv
 
 
@@ -61,7 +61,7 @@ def main() -> None:
     logger.info("Initializing engine  model=%s  dtype=%s", args.model, args.dtype)
 
     engine = Engine(model_path=args.model, dtype=dtype, device=args.device)
-    sched = Scheduler(engine=engine, max_running=args.max_running)
+    sched = BatchedScheduler(engine=engine, max_running=args.max_running)
 
     # Wire up the server module globals
     srv.engine = engine
