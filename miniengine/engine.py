@@ -223,7 +223,7 @@ class Engine:
             input_ids,
             position_ids,
             kv_caches=padded_caches,
-            attention_mask=attn_mask,
+            attn_mask=attn_mask,
         )
 
         # ── 6. Unpad per-request KV caches and store back ──────────────
