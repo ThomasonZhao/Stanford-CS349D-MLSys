@@ -112,7 +112,9 @@ class RotaryEmbedding(nn.Module):
 
         if self._cos is None or max_pos > self._cached_len:
             length = max(max_pos, self._cached_len * 2, 256)
-            t = torch.arange(length, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+            t = torch.arange(
+                length, device=self.inv_freq.device, dtype=self.inv_freq.dtype
+            )
             freqs = torch.outer(t, self.inv_freq)  # (length, head_dim/2)
             emb = torch.cat([freqs, freqs], dim=-1)  # (length, head_dim)
             self._cos = emb.cos()
@@ -169,10 +171,18 @@ class Attention(nn.Module):
         self.head_dim = config.head_dim
         self.num_kv_groups = self.num_heads // self.num_kv_heads
 
-        self.q_proj = nn.Linear(config.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, config.hidden_size, bias=False)
+        self.q_proj = nn.Linear(
+            config.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.k_proj = nn.Linear(
+            config.hidden_size, self.num_kv_heads * self.head_dim, bias=False
+        )
+        self.v_proj = nn.Linear(
+            config.hidden_size, self.num_kv_heads * self.head_dim, bias=False
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, config.hidden_size, bias=False
+        )
 
         # Qwen3: RMSNorm on Q and K after projection (per-head)
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
@@ -184,6 +194,7 @@ class Attention(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
@@ -199,9 +210,21 @@ class Attention(nn.Module):
         bsz, seq_len, _ = hidden.shape
 
         # Project Q, K, V and reshape to (batch, heads, seq_len, head_dim)
-        q = self.q_proj(hidden).view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        q = (
+            self.q_proj(hidden)
+            .view(bsz, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        k = (
+            self.k_proj(hidden)
+            .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        v = (
+            self.v_proj(hidden)
+            .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+            .transpose(1, 2)
+        )
 
         # QK-Norm
         q = self.q_norm(q)
@@ -225,8 +248,10 @@ class Attention(nn.Module):
             v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
 
         # Scaled dot-product attention (uses Flash Attention when available)
-        is_causal = kv_cache is None and seq_len > 1
-        out = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        is_causal = attn_mask is None and kv_cache is None and seq_len > 1
+        out = F.scaled_dot_product_attention(
+            q, k, v, is_causal=is_causal, attn_mask=attn_mask
+        )
 
         # Merge heads → project back
         out = out.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
@@ -241,9 +266,15 @@ class MLP(nn.Module):
 
     def __init__(self, config: ModelConfig):
         super().__init__()
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+        self.gate_proj = nn.Linear(
+            config.hidden_size, config.intermediate_size, bias=False
+        )
+        self.up_proj = nn.Linear(
+            config.hidden_size, config.intermediate_size, bias=False
+        )
+        self.down_proj = nn.Linear(
+            config.intermediate_size, config.hidden_size, bias=False
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
@@ -260,7 +291,9 @@ class TransformerBlock(nn.Module):
         self.self_attn = Attention(config)
         self.mlp = MLP(config)
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -268,10 +301,11 @@ class TransformerBlock(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         residual = hidden
         hidden = self.input_layernorm(hidden)
-        hidden, new_kv = self.self_attn(hidden, cos, sin, kv_cache)
+        hidden, new_kv = self.self_attn(hidden, cos, sin, kv_cache, attn_mask)
         hidden = residual + hidden
 
         residual = hidden
@@ -302,6 +336,7 @@ class TransformerModel(nn.Module):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Args:
@@ -319,7 +354,7 @@ class TransformerModel(nn.Module):
         new_kv_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
         for i, layer in enumerate(self.layers):
             kv = kv_caches[i] if kv_caches is not None else None
-            hidden, new_kv = layer(hidden, cos, sin, kv)
+            hidden, new_kv = layer(hidden, cos, sin, kv, attn_mask)
             new_kv_caches.append(new_kv)
 
         hidden = self.norm(hidden)
@@ -345,13 +380,16 @@ class CausalLM(nn.Module):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Returns:
             logits:        (batch, seq_len, vocab_size)
             new_kv_caches: per-layer KV caches
         """
-        hidden, new_kv_caches = self.model(input_ids, position_ids, kv_caches)
+        hidden, new_kv_caches = self.model(
+            input_ids, position_ids, kv_caches, attn_mask
+        )
         if self.config.tie_word_embeddings:
             logits = F.linear(hidden, self.model.embed_tokens.weight)
         else:
@@ -434,4 +472,9 @@ def load_weights(
 
     # Move to target device
     model.to(device=device)
-    logger.info("Weights loaded — %d parameters on %s (%s)", sum(p.numel() for p in model.parameters()), device, dtype)
+    logger.info(
+        "Weights loaded — %d parameters on %s (%s)",
+        sum(p.numel() for p in model.parameters()),
+        device,
+        dtype,
+    )
