@@ -162,6 +162,7 @@ class Scheduler:
             token_id = self.engine.prefill(req)
             req.output_ids.append(token_id)
             self._stream_token(req, token_id)
+            self.running.append(req)
 
         # Clear finished requests before decode loop in case prefill already hit stop tokens or max_new_tokens
         self._clear_finished(self.running, finished)
