@@ -20,11 +20,16 @@ Go to the GCP credit application page and enter the coupon code you received:
 
 Create a VM instance with the following configuration:
 
-- **Region:** us-central1 (Iowa)
-- **Zone:** Any
-- **GPU type:** NVIDIA T4
-- **Number of GPUs:** 1
+- Region: us-central1 (other regions are also fine)
+- Zone: any
+- GPU type: NVIDIA T4 or L4
+- Number of GPUs: 1
+- Machine type: a highmem instance (>20GB) is recommended due to the memory footprint of the model weights
+- Provision: choose Spot for better availability
+- Disk: 100 GB storage is recommended
+- Image: a deep learning image is recommended to simplify setup
 
 > **Note:** You may need to request a GPU quota increase (GPUs all regions: 0/0 → 1). This is processed automatically and takes a few minutes.
 
 ![VM configuration with T4 GPU](images/03-vm-configuration.png)
+![VM Storage and Image](images/04-vm-image.png)

@@ -104,7 +104,7 @@ Use the serving benchmark to measure improvement:
 
 ```bash
 # Start the server
-python -m miniengine --model Qwen/Qwen3-8B --dtype bfloat16
+python -m miniengine --model Qwen/Qwen3-4B-Instruct-2507 --dtype bfloat16
 
 # Run benchmark
 python -m benchmark.bench_serving --input-len 512 --output-len 256 --concurrencies 1,4,8,16

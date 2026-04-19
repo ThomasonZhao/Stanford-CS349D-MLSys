@@ -65,13 +65,13 @@ The engine serves an OpenAI-compatible API and is structured so that the **sched
 pip install -e .
 
 # Launch (downloads model on first run)
-python -m miniengine --model Qwen/Qwen3-8B
+python -m miniengine --model Qwen/Qwen3-4B-Instruct-2507
 
 # Test with curl
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen/Qwen3-8B",
+    "model": "Qwen/Qwen3-4B-Instruct-2507",
     "messages": [{"role": "user", "content": "Hello!"}],
     "max_tokens": 64,
     "stream": true
