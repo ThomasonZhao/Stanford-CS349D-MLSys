@@ -179,7 +179,7 @@ class Engine:
         Returns:
             A list of next token ids, one per request.
         """
-        num_layers = len(self.requests[0].kv_cache)
+        num_layers = len(requests[0].kv_cache)
         batch_size = len(requests)
         cache_lens = [req.kv_cache[0][0].shape[2] for req in requests]
         max_cache_len = max(cache_lens)
