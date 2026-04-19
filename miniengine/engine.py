@@ -170,8 +170,16 @@ class Engine:
     @torch.inference_mode()
     def batched_decode(self, requests: list[Request]) -> list[int]:
         """
-        TODO
+        Run one batched decode step for multiple requests.
+
+        Pads inputs and KV caches to the max sequence length in the batch,
+        runs them through the model together, then extracts the updated KV cache
+        for each request and samples the next token.
+
+        Returns:
+            A list of next token ids, one per request.
         """
+        num_layers = len(self.requests[0].kv_cache)
         batch_size = len(requests)
         cache_lens = [req.kv_cache[0][0].shape[2] for req in requests]
         max_cache_len = max(cache_lens)
@@ -190,7 +198,7 @@ class Engine:
 
         # Pad per-request KV caches to the max cache length in the batch
         kv_caches = []
-        for layer in range(len(self.model.layers)):
+        for layer in range(num_layers):
             keys = []
             values = []
             for req, cache_len in zip(requests, cache_lens):
@@ -221,7 +229,7 @@ class Engine:
         for i, req in enumerate(requests):
             new_kv = []
             cache_len = cache_lens[i]
-            for layer in range(len(self.model.layers)):
+            for layer in range(num_layers):
                 k, v = new_kv_caches[layer]
 
                 # Keep only this request's real prefix, then append the new
