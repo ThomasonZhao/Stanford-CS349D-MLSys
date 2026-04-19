@@ -111,6 +111,39 @@ class Scheduler:
         """
         finished: list[Request] = []
 
+        # ── Pick one request ────────────────────────────────────────────
+        with self._lock:
+            if not self.waiting:
+                return finished
+            req = self.waiting.popleft()
+
+        # ── Prefill ─────────────────────────────────────────────────────
+        req.status = RequestStatus.RUNNING
+        token_id = self.engine.prefill(req)
+        req.output_ids.append(token_id)
+        self._stream_token(req, token_id)
+
+        # ── Decode until finished ───────────────────────────────────────
+        while not self._check_finished(req, token_id):
+            token_id = self.engine.decode_step(req)
+            req.output_ids.append(token_id)
+            self._stream_token(req, token_id)
+
+        self._finish_request(req, finished)
+        return finished
+
+    def step_batch(self) -> list[Request]:
+        """
+        One scheduling iteration with naive batching.
+        
+        Admits up to `max_running` requests from the waiting queue, prefills
+        them sequentially, then decodes them together in a single batched
+        forward pass until all are finished.  No interleaving between requests.
+        
+        Returns list of requests that finished in this step.
+        """
+        finished: list[Request] = []
+
         # ── Pick up to max_running requests ─────────────────────────────
         with self._lock:
             if not self.waiting:
