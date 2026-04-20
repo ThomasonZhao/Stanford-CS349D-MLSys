@@ -74,6 +74,7 @@ class Engine:
         # ── Batched-decode session state (set by start_batch) ──────────
         self._batch_kv: list[tuple[torch.Tensor, torch.Tensor]] | None = None
         self._batch_orig_lens: list[int] | None = None
+        self._batch_orig_lens_t: torch.Tensor | None = None  # GPU copy
         self._batch_orig_max: int = 0
 
         # ── Stop tokens ─────────────────────────────────────────────────
@@ -219,6 +220,9 @@ class Engine:
 
         self._batch_kv = batched_kv
         self._batch_orig_lens = list(cache_lens)
+        self._batch_orig_lens_t = torch.tensor(
+            cache_lens, dtype=torch.long, device=device,
+        )
         self._batch_orig_max = max_len
 
         # Per-request caches are no longer the source of truth.  Free
@@ -230,6 +234,7 @@ class Engine:
         """Free the batched KV state after the scheduler batch drains."""
         self._batch_kv = None
         self._batch_orig_lens = None
+        self._batch_orig_lens_t = None
         self._batch_orig_max = 0
 
     def drop_batch_rows(self, keep_indices: list[int]) -> None:
@@ -255,6 +260,7 @@ class Engine:
             for K, V in self._batch_kv
         ]
         self._batch_orig_lens = [self._batch_orig_lens[i] for i in keep_indices]
+        self._batch_orig_lens_t = self._batch_orig_lens_t.index_select(0, idx)
 
     @torch.inference_mode()
     def batched_decode(self, requests: list[Request]) -> list[int]:
@@ -299,10 +305,11 @@ class Engine:
         else:
             # Mask shape: (B, 1, 1, cur_seq_len + 1).  Valid for row i at
             # position j iff (j < orig_lens[i]) OR (j >= orig_max).
+            # orig_lens_t is cached on GPU at start_batch / drop_batch_rows
+            # so we don't pay a CPU→GPU sync per decode step.
             total_len = cur_seq_len + 1
             arange = torch.arange(total_len, device=self.device)
-            orig_lens_t = torch.tensor(orig_lens, device=self.device)
-            valid = (arange[None, :] < orig_lens_t[:, None]) | (
+            valid = (arange[None, :] < self._batch_orig_lens_t[:, None]) | (
                 arange[None, :] >= orig_max
             )
             attn_mask = valid.view(B, 1, 1, total_len)
