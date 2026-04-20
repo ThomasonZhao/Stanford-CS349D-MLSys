@@ -164,12 +164,25 @@ class Scheduler:
             # on the next step() would duplicate tokens.  Fail them
             # cleanly so the streaming client unblocks and the
             # scheduler doesn't loop on broken state.
+            #
+            # Note: TokenOutput has no error field within this milestone's
+            # editable surface (core.py is not touched), so downstream
+            # sees a normal stream termination.  The per-request log
+            # below is the strongest correlation handle we have here —
+            # it lets operators tie the upstream "Scheduler step failed"
+            # exception to the specific request_ids that were dropped.
             if self.running:
                 logger.warning(
-                    "Failing %d requests still in-flight after step error",
+                    "Failing %d in-flight requests after step error: %s",
                     len(self.running),
+                    [r.request_id for r in self.running],
                 )
                 for req in self.running:
+                    logger.warning(
+                        "Request %s failed mid-decode after %d output tokens",
+                        req.request_id,
+                        req.num_output_tokens,
+                    )
                     self._finish_request(req, finished)
                 self.running = []
 
