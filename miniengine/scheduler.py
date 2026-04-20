@@ -94,7 +94,8 @@ class Scheduler:
                 continue
             try:
                 # self.step()
-                self.step_batch()
+                # self.step_batch()
+                self.step_iterative()
             except Exception:
                 logger.exception("Scheduler step failed")
 
@@ -136,11 +137,11 @@ class Scheduler:
     def step_batch(self) -> list[Request]:
         """
         One scheduling iteration with naive batching.
-        
+
         Admits up to `max_running` requests from the waiting queue, prefills
         them sequentially, then decodes them together in a single batched
         forward pass until all are finished.  No interleaving between requests.
-        
+
         Returns list of requests that finished in this step.
         """
         finished: list[Request] = []
@@ -169,6 +170,43 @@ class Scheduler:
 
         # ── Decode all in single forward pass ───────────────────────────
         while self.running:
+            tokens = self.engine.batched_decode(self.running)
+            for req, token_id in zip(self.running, tokens):
+                req.output_ids.append(token_id)
+                self._stream_token(req, token_id)
+            self._clear_finished(self.running, finished)
+
+        return finished
+
+    def step_iterative(self) -> list[Request]:
+        """
+        One iteration of continuous (iteration-level) batching.
+
+        Phase 1: admit up to max_running requests and prefill them individually.
+        Phase 2: one batched decode step on all running requests.
+        Finished requests are removed; their slots open for the next call.
+
+        Returns list of requests that finished in this step.
+        """
+        finished: list[Request] = []
+
+        # ── Admit up to max_running requests ────────────────────────────
+        with self._lock:
+            num_to_admit = min(self.max_running - len(self.running), len(self.waiting))
+            reqs = [self.waiting.popleft() for _ in range(num_to_admit)]
+
+        # ── Prefill new requests ────────────────────────────────────────
+        for req in reqs:
+            req.status = RequestStatus.RUNNING
+            token_id = self.engine.prefill(req)
+            req.output_ids.append(token_id)
+            self._stream_token(req, token_id)
+            self.running.append(req)
+
+        self._clear_finished(self.running, finished)
+
+        # ── One batched decode step ─────────────────────────────────────
+        if self.running:
             tokens = self.engine.batched_decode(self.running)
             for req, token_id in zip(self.running, tokens):
                 req.output_ids.append(token_id)
