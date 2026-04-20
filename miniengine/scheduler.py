@@ -188,8 +188,6 @@ class Scheduler:
 
         # ── Admit up to max_running requests ────────────────────────────
         with self._lock:
-            if not self.waiting:
-                return finished
             num_to_admit = min(self.max_running - len(self.running), len(self.waiting))
             reqs = [self.waiting.popleft() for _ in range(num_to_admit)]
 
@@ -251,8 +249,10 @@ class Scheduler:
         self, reqs: list[Request], finished_list: list[Request]
     ) -> None:
         """Remove finished requests from the running list."""
+        newly_finished: list[Request] = []
         for req in reqs:
             if self._check_finished(req, req.output_ids[-1]):
                 self._finish_request(req, finished_list)
-        for req in finished_list:
+                newly_finished.append(req)
+        for req in newly_finished:
             reqs.remove(req)
