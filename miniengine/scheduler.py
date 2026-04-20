@@ -158,6 +158,20 @@ class Scheduler:
                     self.engine.drop_batch_rows(keep_indices)
         finally:
             self.engine.end_batch()
+            # If we're exiting mid-batch (exception), the surviving
+            # requests have stale per-request kv_cache (cleared by
+            # start_batch) and partial output_ids.  Re-prefilling them
+            # on the next step() would duplicate tokens.  Fail them
+            # cleanly so the streaming client unblocks and the
+            # scheduler doesn't loop on broken state.
+            if self.running:
+                logger.warning(
+                    "Failing %d requests still in-flight after step error",
+                    len(self.running),
+                )
+                for req in self.running:
+                    self._finish_request(req, finished)
+                self.running = []
 
         return finished
 
