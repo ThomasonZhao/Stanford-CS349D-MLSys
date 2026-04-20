@@ -29,11 +29,21 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     """
-    FCFS scheduler with static batching.
+    FCFS scheduler with continuous (iteration-level) batching.
 
-    Each step admits up to `max_running` requests from the waiting queue,
-    prefills them individually, then repeatedly batched-decodes the whole
-    group until every request in the batch has finished.
+    Each step:
+      1. Admits any waiting requests up to max_running and prefills them
+         (prefill stays unbatched per the milestone spec).
+      2. Runs ONE batched decode across all currently-running requests
+         (including those just prefilled in this same step).
+      3. Retires any requests that finished, freeing their slots for the
+         next step's admit phase.
+
+    Unlike static batching, the batch composition can change every
+    iteration: a request that finishes mid-batch frees its slot
+    immediately, and a new request from the waiting queue joins the
+    batch on the very next step rather than waiting for the entire
+    batch to drain.
 
     Public API (thread-safe):
         add_request(req)   — enqueue a new request
@@ -105,86 +115,64 @@ class Scheduler:
 
     def step(self) -> list[Request]:
         """
-        One scheduling iteration (static batching).
+        One scheduling iteration (continuous / iteration-level batching).
 
-        Admits up to max_running requests from the waiting queue, prefills
-        them one by one, then repeatedly batched-decodes the whole group
-        until every request in the batch has finished.
+        Phases:
+          1. Admit any waiting requests up to max_running, then prefill
+             those new admits one by one.
+          2. Batched-decode every currently-running request (including
+             the just-prefilled ones) in a single forward pass.
+          3. Retire any finished requests; their slots free up for the
+             next step's admit phase.
 
-        Returns list of requests that finished in this step.
+        Returns the list of requests that finished in this step.
         """
         finished: list[Request] = []
 
-        # ── Admit up to max_running requests ────────────────────────────
+        # ── Phase 1: admit + prefill new requests ───────────────────────
+        new_admits: list[Request] = []
         with self._lock:
             while self.waiting and len(self.running) < self.max_running:
-                self.running.append(self.waiting.popleft())
+                req = self.waiting.popleft()
+                self.running.append(req)
+                new_admits.append(req)
 
-        if not self.running:
-            return finished
-
-        # ── Prefill (unbatched) ─────────────────────────────────────────
-        for req in self.running:
+        for req in new_admits:
             req.status = RequestStatus.RUNNING
             token_id = self.engine.prefill(req)
             req.output_ids.append(token_id)
             self._stream_token(req, token_id)
 
-        # Drop requests that already finished on the first sampled token
-        # (e.g. immediate stop token or max_new_tokens == 1) so we don't
-        # waste a decode pass on them.
-        self.running, _ = self._retire_finished(self.running, finished)
+        # Drop any new admit that already finished on its first sampled
+        # token (immediate stop token / max_new_tokens == 1) so we don't
+        # waste a decode slot on it.
+        if new_admits:
+            self.running, _ = self._retire_finished(self.running, finished)
 
         if not self.running:
             return finished
 
-        # ── Hand the per-request KVs to the engine as one batched state.
-        # This is built once and grown in place across decode steps,
-        # rather than re-padding/re-unpacking on every single token.
-        self.engine.start_batch(self.running)
+        logger.debug(
+            "step: batch=%d (new=%d), waiting=%d",
+            len(self.running), len(new_admits), len(self.waiting),
+        )
 
-        # ── Batched decode until the batch drains ───────────────────────
+        # ── Phase 2: ONE batched decode across all running requests ────
         try:
-            while self.running:
-                tokens = self.engine.batched_decode(self.running)
-                for req, tok in zip(self.running, tokens):
-                    req.output_ids.append(tok)
-                    self._stream_token(req, tok)
-                self.running, keep_indices = self._retire_finished(
-                    self.running, finished
-                )
-                if self.running:
-                    # Some retired — drop their rows from the batched KV.
-                    self.engine.drop_batch_rows(keep_indices)
-        finally:
-            self.engine.end_batch()
-            # If we're exiting mid-batch (exception), the surviving
-            # requests have stale per-request kv_cache (cleared by
-            # start_batch) and partial output_ids.  Re-prefilling them
-            # on the next step() would duplicate tokens.  Fail them
-            # cleanly so the streaming client unblocks and the
-            # scheduler doesn't loop on broken state.
-            #
-            # Note: TokenOutput has no error field within this milestone's
-            # editable surface (core.py is not touched), so downstream
-            # sees a normal stream termination.  The per-request log
-            # below is the strongest correlation handle we have here —
-            # it lets operators tie the upstream "Scheduler step failed"
-            # exception to the specific request_ids that were dropped.
-            if self.running:
-                logger.warning(
-                    "Failing %d in-flight requests after step error: %s",
-                    len(self.running),
-                    [r.request_id for r in self.running],
-                )
-                for req in self.running:
-                    logger.warning(
-                        "Request %s failed mid-decode after %d output tokens",
-                        req.request_id,
-                        req.num_output_tokens,
-                    )
-                    self._finish_request(req, finished)
-                self.running = []
+            tokens = self.engine.batched_decode(self.running)
+        except Exception:
+            # batched_decode is stateless w.r.t. per-request kv_cache:
+            # if the forward fails, each request's kv_cache is unchanged
+            # from before this call, so they remain valid for retry on
+            # the next step.  Re-raise to let the loop log it.
+            raise
+
+        for req, tok in zip(self.running, tokens):
+            req.output_ids.append(tok)
+            self._stream_token(req, tok)
+
+        # ── Phase 3: retire finished requests ───────────────────────────
+        self.running, _ = self._retire_finished(self.running, finished)
 
         return finished
 
@@ -209,9 +197,7 @@ class Scheduler:
         """
         Split `batch` into still-running and finished; retire the latter.
 
-        Returns the surviving requests and the indices (into `batch`) of
-        those survivors.  The indices let the engine drop the
-        corresponding rows from its batched KV state.
+        Returns the surviving requests and their indices into `batch`.
         """
         still_running: list[Request] = []
         keep_indices: list[int] = []
