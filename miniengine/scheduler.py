@@ -90,7 +90,7 @@ class Scheduler:
         while self._running_flag:
             has_work = bool(self.waiting) or bool(self.running)
             if not has_work:
-                time.sleep(0.005)  # idle sleep to avoid busy-waiting
+                time.sleep(0.001)  # idle sleep to avoid busy-waiting
                 continue
             try:
                 # self.step()
