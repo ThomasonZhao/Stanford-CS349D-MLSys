@@ -133,15 +133,31 @@ class Scheduler:
         # Drop requests that already finished on the first sampled token
         # (e.g. immediate stop token or max_new_tokens == 1) so we don't
         # waste a decode pass on them.
-        self.running = self._retire_finished(self.running, finished)
+        self.running, _ = self._retire_finished(self.running, finished)
+
+        if not self.running:
+            return finished
+
+        # ── Hand the per-request KVs to the engine as one batched state.
+        # This is built once and grown in place across decode steps,
+        # rather than re-padding/re-unpacking on every single token.
+        self.engine.start_batch(self.running)
 
         # ── Batched decode until the batch drains ───────────────────────
-        while self.running:
-            tokens = self.engine.batched_decode(self.running)
-            for req, tok in zip(self.running, tokens):
-                req.output_ids.append(tok)
-                self._stream_token(req, tok)
-            self.running = self._retire_finished(self.running, finished)
+        try:
+            while self.running:
+                tokens = self.engine.batched_decode(self.running)
+                for req, tok in zip(self.running, tokens):
+                    req.output_ids.append(tok)
+                    self._stream_token(req, tok)
+                self.running, keep_indices = self._retire_finished(
+                    self.running, finished
+                )
+                if self.running:
+                    # Some retired — drop their rows from the batched KV.
+                    self.engine.drop_batch_rows(keep_indices)
+        finally:
+            self.engine.end_batch()
 
         return finished
 
@@ -162,15 +178,23 @@ class Scheduler:
 
     def _retire_finished(
         self, batch: list[Request], finished: list[Request]
-    ) -> list[Request]:
-        """Split `batch` into still-running and finished; retire the latter."""
+    ) -> tuple[list[Request], list[int]]:
+        """
+        Split `batch` into still-running and finished; retire the latter.
+
+        Returns the surviving requests and the indices (into `batch`) of
+        those survivors.  The indices let the engine drop the
+        corresponding rows from its batched KV state.
+        """
         still_running: list[Request] = []
-        for req in batch:
+        keep_indices: list[int] = []
+        for i, req in enumerate(batch):
             if self._check_finished(req, req.output_ids[-1]):
                 self._finish_request(req, finished)
             else:
                 still_running.append(req)
-        return still_running
+                keep_indices.append(i)
+        return still_running, keep_indices
 
     def _finish_request(self, req: Request, finished_list: list[Request]) -> None:
         """Mark a request as finished and free its resources."""
