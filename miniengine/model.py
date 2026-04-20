@@ -218,16 +218,20 @@ class Attention(nn.Module):
             v = torch.cat([kv_cache[1], v], dim=2)
         new_kv = (k, v)
 
-        # GQA: expand KV heads to match Q heads
-        if self.num_kv_groups > 1:
-            k = k[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            k = k.reshape(bsz, self.num_heads, -1, self.head_dim)
-            v = v[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
-
-        # Scaled dot-product attention (uses Flash Attention when available)
+        # GQA is handled natively inside SDPA via enable_gqa=True (PyTorch
+        # 2.5+).  The previous code did this manually with expand+reshape,
+        # which forced a full contiguous copy of K and V every step
+        # (the stride-0 expansion can't reshape into a contiguous merged
+        # head axis as a view).  At B=16, seq=768, 36 layers that was
+        # ~7 GiB of allocate-and-write traffic per decode token — the
+        # dominant cost on memory-bandwidth-bound GPUs.
         is_causal = attn_mask is None and kv_cache is None and seq_len > 1
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_mask,
+            is_causal=is_causal,
+            enable_gqa=self.num_kv_groups > 1,
+        )
 
         # Merge heads → project back
         out = out.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
