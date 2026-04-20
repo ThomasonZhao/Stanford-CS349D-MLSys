@@ -146,16 +146,12 @@ class Scheduler:
         """
         finished: list[Request] = []
 
-        # ── Pick up to max_running requests ─────────────────────────────
+        # ── Admit up to max_running requests ────────────────────────────
         with self._lock:
             if not self.waiting:
                 return finished
-            reqs = [
-                self.waiting.popleft()
-                for _ in range(
-                    min(self.max_running - len(self.running), len(self.waiting))
-                )
-            ]
+            num_to_admit = min(self.max_running - len(self.running), len(self.waiting))
+            reqs = [self.waiting.popleft() for _ in range(num_to_admit)]
 
         # ── Prefill ─────────────────────────────────────────────────────
         for req in reqs:
@@ -192,6 +188,8 @@ class Scheduler:
 
         # ── Admit up to max_running requests ────────────────────────────
         with self._lock:
+            if not self.waiting:
+                return finished
             num_to_admit = min(self.max_running - len(self.running), len(self.waiting))
             reqs = [self.waiting.popleft() for _ in range(num_to_admit)]
 
