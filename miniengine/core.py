@@ -80,5 +80,5 @@ class TokenOutput:
     """One streamed token pushed from the scheduler to the server."""
 
     token_id: int
-    token_text: str
     finished: bool
+    token_text: str = ""

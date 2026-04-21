@@ -366,6 +366,16 @@ class Engine:
         self._batch_kv = new_kv
         self._batch_seq_len += input_ids.shape[1]
 
+        # Fast path for the serving benchmark's common greedy decode:
+        # avoid per-request clone/filter/sample work when every request is
+        # simple argmax with no repetition penalty.
+        if all(
+            req.sampling_params.temperature == 0
+            and req.sampling_params.repetition_penalty == 1.0
+            for req in requests
+        ):
+            return logits[:, -1, :].argmax(dim=-1).tolist()
+
         # ── 5. Sample one token per request.  Slice keeps the (1, vocab)
         # shape sample_token / apply_repetition_penalty expect.
         return [

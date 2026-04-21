@@ -201,8 +201,7 @@ class Scheduler:
 
     def _stream_token(self, req: Request, token_id: int) -> None:
         """Push a generated token into the request's streaming queue."""
-        text = self.engine.decode_token(token_id)
-        req.token_queue.put(TokenOutput(token_id=token_id, token_text=text, finished=False))
+        req.token_queue.put(TokenOutput(token_id=token_id, finished=False))
 
     def _retire_finished(
         self, batch: list[Request], finished: list[Request]
