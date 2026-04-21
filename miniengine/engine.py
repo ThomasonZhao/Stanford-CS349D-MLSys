@@ -77,6 +77,7 @@ class Engine:
         self._batch_orig_lens_t: torch.Tensor | None = None
         self._batch_orig_max: int = 0
         self._batch_requests: list[Request] | None = None
+        self._batch_seq_len: int = 0
 
         # ── Stop tokens ─────────────────────────────────────────────────
         self.stop_token_ids: set[int] = set()
@@ -192,7 +193,7 @@ class Engine:
             raise RuntimeError("No active batched KV to materialize from.")
 
         orig_len = orig_lens[row_idx]
-        cur_seq_len = kv[0][0].shape[2]
+        cur_seq_len = self._batch_seq_len
         tail_start = self._batch_orig_max
 
         per_req: list[tuple[torch.Tensor, torch.Tensor]] = []
@@ -226,6 +227,11 @@ class Engine:
         num_layers = len(requests[0].kv_cache)
         cache_lens = [r.kv_cache[0][0].shape[2] for r in requests]
         max_len = max(cache_lens)
+        max_remaining = max(
+            max(1, req.sampling_params.max_new_tokens - req.num_output_tokens)
+            for req in requests
+        )
+        capacity = max_len + max_remaining
         B = len(requests)
 
         sample_k = requests[0].kv_cache[0][0]
@@ -234,8 +240,8 @@ class Engine:
 
         batched_kv: list[tuple[torch.Tensor, torch.Tensor]] = []
         for layer in range(num_layers):
-            K = torch.empty(B, kvh, max_len, hd, dtype=dtype, device=device)
-            V = torch.empty(B, kvh, max_len, hd, dtype=dtype, device=device)
+            K = torch.empty(B, kvh, capacity, hd, dtype=dtype, device=device)
+            V = torch.empty(B, kvh, capacity, hd, dtype=dtype, device=device)
             for i, (req, L) in enumerate(zip(requests, cache_lens)):
                 K[i, :, :L, :] = req.kv_cache[layer][0][0]
                 V[i, :, :L, :] = req.kv_cache[layer][1][0]
@@ -248,6 +254,7 @@ class Engine:
         )
         self._batch_orig_max = max_len
         self._batch_requests = list(requests)
+        self._batch_seq_len = max_len
 
         # Batched KV is now the source of truth.
         for req in requests:
@@ -302,6 +309,7 @@ class Engine:
         self._batch_orig_lens_t = None
         self._batch_orig_max = 0
         self._batch_requests = None
+        self._batch_seq_len = 0
 
     @torch.inference_mode()
     def batched_decode(self, requests: list[Request]) -> list[int]:
@@ -326,7 +334,7 @@ class Engine:
             device=self.device,
         )
 
-        cur_seq_len = kv[0][0].shape[2]
+        cur_seq_len = self._batch_seq_len
         decoded_so_far = cur_seq_len - self._batch_orig_max
         cur_lens = [L + decoded_so_far for L in orig_lens]
 
@@ -349,9 +357,14 @@ class Engine:
         # ── 4. Single batched forward pass. Model concatenates the new
         # K/V to the cache internally, growing seq dim by 1.
         logits, new_kv = self.model(
-            input_ids, position_ids, kv_caches=kv, attn_mask=attn_mask,
+            input_ids,
+            position_ids,
+            kv_caches=kv,
+            attn_mask=attn_mask,
+            kv_write_pos=cur_seq_len,
         )
         self._batch_kv = new_kv
+        self._batch_seq_len += input_ids.shape[1]
 
         # ── 5. Sample one token per request.  Slice keeps the (1, vocab)
         # shape sample_token / apply_repetition_penalty expect.
