@@ -210,12 +210,20 @@ class Engine:
         kv_caches = []
         for layer in range(num_layers):
             k_padded = torch.zeros(
-                batch_size, kv_heads, max_cache_len, head_dim,
-                dtype=self.dtype, device=self.device,
+                batch_size,
+                kv_heads,
+                max_cache_len,
+                head_dim,
+                dtype=self.dtype,
+                device=self.device,
             )
             v_padded = torch.zeros(
-                batch_size, kv_heads, max_cache_len, head_dim,
-                dtype=self.dtype, device=self.device,
+                batch_size,
+                kv_heads,
+                max_cache_len,
+                head_dim,
+                dtype=self.dtype,
+                device=self.device,
             )
             for i, (req, cl) in enumerate(zip(requests, cache_lens)):
                 k, v = req.kv_cache[layer]
@@ -248,12 +256,20 @@ class Engine:
             for layer in range(num_layers):
                 k, v = new_kv_caches[layer]
                 req_k = torch.empty(
-                    1, kv_heads, new_len, head_dim,
-                    dtype=self.dtype, device=self.device,
+                    1,
+                    kv_heads,
+                    new_len,
+                    head_dim,
+                    dtype=self.dtype,
+                    device=self.device,
                 )
                 req_v = torch.empty(
-                    1, kv_heads, new_len, head_dim,
-                    dtype=self.dtype, device=self.device,
+                    1,
+                    kv_heads,
+                    new_len,
+                    head_dim,
+                    dtype=self.dtype,
+                    device=self.device,
                 )
                 req_k[0, :, :cl, :] = k[i, :, :cl, :]
                 req_k[0, :, cl, :] = k[i, :, -1, :]
