@@ -150,6 +150,7 @@ class Scheduler:
             self.running, _ = self._retire_finished(self.running, finished)
 
         if not self.running:
+            self.engine.end_batch()
             return finished
 
         logger.debug(
@@ -157,14 +158,22 @@ class Scheduler:
             len(self.running), len(new_admits), len(self.waiting),
         )
 
-        # ── Phase 2: ONE batched decode across all running requests ────
+        # ── Phase 2: keep a persistent batched KV across decode steps.
+        # Rebuild only when the running set changes; otherwise reuse it.
         try:
+            if not self.engine.batch_matches(self.running):
+                self.engine.rebuild_batch(self.running)
             tokens = self.engine.batched_decode(self.running)
         except Exception:
-            # batched_decode is stateless w.r.t. per-request kv_cache:
-            # if the forward fails, each request's kv_cache is unchanged
-            # from before this call, so they remain valid for retry on
-            # the next step.  Re-raise to let the loop log it.
+            self.engine.end_batch()
+            if self.running:
+                logger.warning(
+                    "Failing %d requests still in-flight after step error",
+                    len(self.running),
+                )
+                for req in self.running:
+                    self._finish_request(req, finished)
+                self.running = []
             raise
 
         for req, tok in zip(self.running, tokens):
@@ -172,7 +181,11 @@ class Scheduler:
             self._stream_token(req, tok)
 
         # ── Phase 3: retire finished requests ───────────────────────────
-        self.running, _ = self._retire_finished(self.running, finished)
+        self.running, keep_indices = self._retire_finished(self.running, finished)
+        if self.running:
+            self.engine.drop_batch_rows(keep_indices)
+        else:
+            self.engine.end_batch()
 
         return finished
 
