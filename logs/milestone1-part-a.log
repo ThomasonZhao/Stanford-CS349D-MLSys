@@ -1,0 +1,41 @@
+  Auto-detected model: Qwen/Qwen3-4B-Instruct-2507
+
+============================================================
+  Serving Benchmark
+  Server       : http://localhost:8000
+  Model        : Qwen/Qwen3-4B-Instruct-2507
+  Requests     : 100
+  Input len    : 512
+  Output len   : 256
+  Randomness   : 1.0
+  Concurrencies: [1, 4, 8, 16]
+============================================================
+
+  Loading tokenizer...
+  Loading WildChat prompts...
+  Loaded 500 candidate prompts
+  Preparing 100 requests...
+  Input lengths:  min=512, max=521, mean=516
+  Output lengths: min=256, max=256, mean=256
+
+  Running concurrency=1 (100 requests)...
+  conc=1    TTFT p50=    238ms  p99=    245ms  Compl p50=  12562ms  p99=  12591ms  GenTok/s=     20  ok=100
+
+  Running concurrency=4 (100 requests)...
+  conc=4    TTFT p50=  13077ms  p99=  18062ms  Compl p50=  30378ms  p99=  30418ms  GenTok/s=     34  ok=100
+
+  Running concurrency=8 (100 requests)...
+  conc=8    TTFT p50=  13565ms  p99=  27314ms  Compl p50=  39615ms  p99=  39676ms  GenTok/s=     51  ok=100
+
+  Running concurrency=16 (100 requests)...
+  conc=16   TTFT p50=  19145ms  p99=  22735ms  Compl p50=  60120ms  p99=  61103ms  GenTok/s=     67  ok=100
+
+====================================================================================================
+ Conc   TTFT_p50   TTFT_p99  Compl_p50  Compl_p99   TPOT_p50   TPOT_p99   GenTok/s    OK
+       (ms)       (ms)        (ms)        (ms)        (ms)        (ms)
+----------------------------------------------------------------------------------------------------
+    1        238        245      12562      12591       48.3       48.4         20   100
+    4      13077      18062      30378      30418       67.4       69.0         34   100
+    8      13565      27314      39615      39676      101.5      105.2         51   100
+   16      19145      22735      60120      61103      159.6      181.4         67   100
+====================================================================================================
