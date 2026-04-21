@@ -134,7 +134,11 @@ async def _stream_response(
             yield f"data: {json.dumps(chunk)}\n\n"
             yield "data: [DONE]\n\n"
             return
-        chunk = _make_stream_chunk(req.request_id, model, content=output.token_text)
+        content = output.token_text
+        if not content:
+            assert engine is not None
+            content = engine.decode_token(output.token_id)
+        chunk = _make_stream_chunk(req.request_id, model, content=content)
         yield f"data: {json.dumps(chunk)}\n\n"
 
 
@@ -148,7 +152,11 @@ async def _collect_full_response(req: Request) -> str:
         )
         if output.finished:
             break
-        parts.append(output.token_text)
+        content = output.token_text
+        if not content:
+            assert engine is not None
+            content = engine.decode_token(output.token_id)
+        parts.append(content)
     return "".join(parts)
 
 

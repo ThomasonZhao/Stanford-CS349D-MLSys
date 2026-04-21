@@ -29,7 +29,21 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     """
-    Naive FCFS scheduler — processes requests one at a time.
+    FCFS scheduler with continuous (iteration-level) batching.
+
+    Each step:
+      1. Admits any waiting requests up to max_running and prefills them
+         (prefill stays unbatched per the milestone spec).
+      2. Runs ONE batched decode across all currently-running requests
+         (including those just prefilled in this same step).
+      3. Retires any requests that finished, freeing their slots for the
+         next step's admit phase.
+
+    Unlike static batching, the batch composition can change every
+    iteration: a request that finishes mid-batch frees its slot
+    immediately, and a new request from the waiting queue joins the
+    batch on the very next step rather than waiting for the entire
+    batch to drain.
 
     Public API (thread-safe):
         add_request(req)   — enqueue a new request
@@ -101,35 +115,78 @@ class Scheduler:
 
     def step(self) -> list[Request]:
         """
-        One scheduling iteration — maximally naive.
+        One scheduling iteration (continuous / iteration-level batching).
 
-        Takes one request from the waiting queue, prefills it, and decodes
-        it to completion before moving on to the next request.  No batching,
-        no interleaving.
+        Phases:
+          1. Admit any waiting requests up to max_running, then prefill
+             those new admits one by one.
+          2. Batched-decode every currently-running request (including
+             the just-prefilled ones) in a single forward pass.
+          3. Retire any finished requests; their slots free up for the
+             next step's admit phase.
 
-        Returns list of requests that finished in this step.
+        Returns the list of requests that finished in this step.
         """
         finished: list[Request] = []
 
-        # ── Pick one request ────────────────────────────────────────────
+        # ── Phase 1: admit + prefill new requests ───────────────────────
+        new_admits: list[Request] = []
         with self._lock:
-            if not self.waiting:
-                return finished
-            req = self.waiting.popleft()
+            while self.waiting and len(self.running) < self.max_running:
+                req = self.waiting.popleft()
+                self.running.append(req)
+                new_admits.append(req)
 
-        # ── Prefill ─────────────────────────────────────────────────────
-        req.status = RequestStatus.RUNNING
-        token_id = self.engine.prefill(req)
-        req.output_ids.append(token_id)
-        self._stream_token(req, token_id)
-
-        # ── Decode until finished ───────────────────────────────────────
-        while not self._check_finished(req, token_id):
-            token_id = self.engine.decode_step(req)
+        for req in new_admits:
+            req.status = RequestStatus.RUNNING
+            token_id = self.engine.prefill(req)
             req.output_ids.append(token_id)
             self._stream_token(req, token_id)
 
-        self._finish_request(req, finished)
+        # Drop any new admit that already finished on its first sampled
+        # token (immediate stop token / max_new_tokens == 1) so we don't
+        # waste a decode slot on it.
+        if new_admits:
+            self.running, _ = self._retire_finished(self.running, finished)
+
+        if not self.running:
+            self.engine.end_batch()
+            return finished
+
+        logger.debug(
+            "step: batch=%d (new=%d), waiting=%d",
+            len(self.running), len(new_admits), len(self.waiting),
+        )
+
+        # ── Phase 2: keep a persistent batched KV across decode steps.
+        # Rebuild only when the running set changes; otherwise reuse it.
+        try:
+            if not self.engine.batch_matches(self.running):
+                self.engine.rebuild_batch(self.running)
+            tokens = self.engine.batched_decode(self.running)
+        except Exception:
+            self.engine.end_batch()
+            if self.running:
+                logger.warning(
+                    "Failing %d requests still in-flight after step error",
+                    len(self.running),
+                )
+                for req in self.running:
+                    self._finish_request(req, finished)
+                self.running = []
+            raise
+
+        for req, tok in zip(self.running, tokens):
+            req.output_ids.append(tok)
+            self._stream_token(req, tok)
+
+        # ── Phase 3: retire finished requests ───────────────────────────
+        self.running, keep_indices = self._retire_finished(self.running, finished)
+        if self.running:
+            self.engine.drop_batch_rows(keep_indices)
+        else:
+            self.engine.end_batch()
+
         return finished
 
     # ── Helpers ─────────────────────────────────────────────────────────
@@ -144,8 +201,25 @@ class Scheduler:
 
     def _stream_token(self, req: Request, token_id: int) -> None:
         """Push a generated token into the request's streaming queue."""
-        text = self.engine.decode_token(token_id)
-        req.token_queue.put(TokenOutput(token_id=token_id, token_text=text, finished=False))
+        req.token_queue.put(TokenOutput(token_id=token_id, finished=False))
+
+    def _retire_finished(
+        self, batch: list[Request], finished: list[Request]
+    ) -> tuple[list[Request], list[int]]:
+        """
+        Split `batch` into still-running and finished; retire the latter.
+
+        Returns the surviving requests and their indices into `batch`.
+        """
+        still_running: list[Request] = []
+        keep_indices: list[int] = []
+        for i, req in enumerate(batch):
+            if self._check_finished(req, req.output_ids[-1]):
+                self._finish_request(req, finished)
+            else:
+                still_running.append(req)
+                keep_indices.append(i)
+        return still_running, keep_indices
 
     def _finish_request(self, req: Request, finished_list: list[Request]) -> None:
         """Mark a request as finished and free its resources."""

@@ -137,6 +137,9 @@ def prepare_requests(
             ids = tokenizer.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True,
             )
+        # transformers >= 5.0 returns a dict; unwrap to the bare id list.
+        if hasattr(ids, "keys") and "input_ids" in ids:
+            ids = ids["input_ids"]
 
         if len(ids) > req_input_len:
             # Truncate: decode back to text from truncated ids
@@ -149,7 +152,10 @@ def prepare_requests(
             # Pad by repeating the prompt
             filler = " The quick brown fox jumps over the lazy dog."
             padded = raw_prompt
-            while True:
+            # Defaults in case the loop never reaches the target.
+            messages = [{"role": "user", "content": padded}]
+            actual_input_len = len(ids)
+            for _ in range(200):  # safety cap to prevent runaway looping
                 padded += filler
                 msgs = [{"role": "user", "content": padded}]
                 try:
@@ -161,9 +167,11 @@ def prepare_requests(
                     test_ids = tokenizer.apply_chat_template(
                         msgs, tokenize=True, add_generation_prompt=True,
                     )
-                if len(test_ids) >= req_input_len:
-                    messages = msgs
-                    actual_input_len = len(test_ids)
+                if hasattr(test_ids, "keys") and "input_ids" in test_ids:
+                    test_ids = test_ids["input_ids"]
+                messages = msgs
+                actual_input_len = len(test_ids)
+                if actual_input_len >= req_input_len:
                     break
         else:
             actual_input_len = len(ids)

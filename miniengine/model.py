@@ -184,6 +184,8 @@ class Attention(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        attn_mask: torch.Tensor | None = None,
+        kv_write_pos: int | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
@@ -211,22 +213,38 @@ class Attention(nn.Module):
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
 
-        # Append to KV cache
-        if kv_cache is not None:
+        # Append to KV cache.  For the persistent batched-decode path we
+        # preallocate extra KV capacity and write the new token in place,
+        # avoiding a full-sequence torch.cat on every decode step.
+        if kv_cache is not None and kv_write_pos is not None:
+            cached_k, cached_v = kv_cache
+            end_pos = kv_write_pos + seq_len
+            cached_k[:, :, kv_write_pos:end_pos, :] = k
+            cached_v[:, :, kv_write_pos:end_pos, :] = v
+            k = cached_k[:, :, :end_pos, :]
+            v = cached_v[:, :, :end_pos, :]
+            new_kv = (cached_k, cached_v)
+        elif kv_cache is not None:
             k = torch.cat([kv_cache[0], k], dim=2)
             v = torch.cat([kv_cache[1], v], dim=2)
-        new_kv = (k, v)
+            new_kv = (k, v)
+        else:
+            new_kv = (k, v)
 
-        # GQA: expand KV heads to match Q heads
-        if self.num_kv_groups > 1:
-            k = k[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            k = k.reshape(bsz, self.num_heads, -1, self.head_dim)
-            v = v[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
-
-        # Scaled dot-product attention (uses Flash Attention when available)
-        is_causal = kv_cache is None and seq_len > 1
-        out = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        # GQA is handled natively inside SDPA via enable_gqa=True (PyTorch
+        # 2.5+).  The previous code did this manually with expand+reshape,
+        # which forced a full contiguous copy of K and V every step
+        # (the stride-0 expansion can't reshape into a contiguous merged
+        # head axis as a view).  At B=16, seq=768, 36 layers that was
+        # ~7 GiB of allocate-and-write traffic per decode token — the
+        # dominant cost on memory-bandwidth-bound GPUs.
+        is_causal = attn_mask is None and kv_cache is None and seq_len > 1
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_mask,
+            is_causal=is_causal,
+            enable_gqa=self.num_kv_groups > 1,
+        )
 
         # Merge heads → project back
         out = out.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
@@ -268,10 +286,14 @@ class TransformerBlock(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
+        attn_mask: torch.Tensor | None = None,
+        kv_write_pos: int | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         residual = hidden
         hidden = self.input_layernorm(hidden)
-        hidden, new_kv = self.self_attn(hidden, cos, sin, kv_cache)
+        hidden, new_kv = self.self_attn(
+            hidden, cos, sin, kv_cache, attn_mask, kv_write_pos
+        )
         hidden = residual + hidden
 
         residual = hidden
@@ -302,6 +324,8 @@ class TransformerModel(nn.Module):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        attn_mask: torch.Tensor | None = None,
+        kv_write_pos: int | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Args:
@@ -319,7 +343,7 @@ class TransformerModel(nn.Module):
         new_kv_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
         for i, layer in enumerate(self.layers):
             kv = kv_caches[i] if kv_caches is not None else None
-            hidden, new_kv = layer(hidden, cos, sin, kv)
+            hidden, new_kv = layer(hidden, cos, sin, kv, attn_mask, kv_write_pos)
             new_kv_caches.append(new_kv)
 
         hidden = self.norm(hidden)
@@ -345,13 +369,17 @@ class CausalLM(nn.Module):
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        attn_mask: torch.Tensor | None = None,
+        kv_write_pos: int | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Returns:
             logits:        (batch, seq_len, vocab_size)
             new_kv_caches: per-layer KV caches
         """
-        hidden, new_kv_caches = self.model(input_ids, position_ids, kv_caches)
+        hidden, new_kv_caches = self.model(
+            input_ids, position_ids, kv_caches, attn_mask, kv_write_pos
+        )
         if self.config.tie_word_embeddings:
             logits = F.linear(hidden, self.model.embed_tokens.weight)
         else:

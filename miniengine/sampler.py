@@ -42,13 +42,19 @@ def sample_token(
     Returns:
         A single token id (int).
     """
+    # Greedy
+    if params.temperature == 0 and (
+        not output_ids or params.repetition_penalty == 1.0
+    ):
+        return logits.argmax(dim=-1).item()
+
     logits = logits.clone()
 
     # Repetition penalty
     if output_ids:
         logits = apply_repetition_penalty(logits, output_ids, params.repetition_penalty)
 
-    # Greedy
+    # Greedy with repetition penalty
     if params.temperature == 0:
         return logits.argmax(dim=-1).item()
 
