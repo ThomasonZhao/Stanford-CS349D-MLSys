@@ -35,14 +35,17 @@ def parse_args() -> argparse.Namespace:
         default="float16",
         choices=["float16", "bfloat16", "float32"],
     )
-    p.add_argument(
-        "--device", type=str, default="cuda", help="Device to load model on"
-    )
+    p.add_argument("--device", type=str, default="cuda", help="Device to load model on")
     p.add_argument(
         "--max-running",
         type=int,
         default=16,
         help="Max concurrent requests in the scheduler",
+    )
+    p.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable torch.compile for optimized kernel fusion",
     )
     return p.parse_args()
 
@@ -60,7 +63,12 @@ def main() -> None:
     dtype = getattr(torch, args.dtype)
     logger.info("Initializing engine  model=%s  dtype=%s", args.model, args.dtype)
 
-    engine = Engine(model_path=args.model, dtype=dtype, device=args.device)
+    engine = Engine(
+        model_path=args.model,
+        dtype=dtype,
+        device=args.device,
+        compile_model=args.compile,
+    )
     sched = Scheduler(engine=engine, max_running=args.max_running)
 
     # Wire up the server module globals

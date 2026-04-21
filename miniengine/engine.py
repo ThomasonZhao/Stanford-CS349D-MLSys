@@ -41,6 +41,7 @@ class Engine:
         model_path: str,
         dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
+        compile_model: bool = False,
     ):
         self.device = device
         self.dtype = dtype
@@ -83,6 +84,10 @@ class Engine:
             tid = self.tokenizer.convert_tokens_to_ids(token_str)
             if tid is not None and tid != self.tokenizer.unk_token_id:
                 self.stop_token_ids.add(tid)
+
+        if compile_model:
+            logger.info("Compiling model with torch.compile …")
+            self.model = torch.compile(self.model)
 
         logger.info(
             "Engine ready  —  vocab=%d, stop_ids=%s, params=%dM",
@@ -158,12 +163,125 @@ class Engine:
         cache_len = request.kv_cache[0][0].shape[2]  # layer 0, key tensor, seq dim
         position_ids = torch.tensor([[cache_len]], device=self.device)
 
-        logits, kv_caches = self.model(input_ids, position_ids, kv_caches=request.kv_cache)
+        logits, kv_caches = self.model(
+            input_ids, position_ids, kv_caches=request.kv_cache
+        )
         request.kv_cache = kv_caches
 
         return sample_token(
             logits[:, -1, :], request.sampling_params, request.output_ids
         )
+
+    @torch.inference_mode()
+    def batched_decode(self, requests: list[Request]) -> list[int]:
+        """
+        Run one batched decode step for multiple requests.
+
+        Pads inputs and KV caches to the max sequence length in the batch,
+        runs them through the model together, then extracts the updated KV cache
+        for each request and samples the next token.
+
+        Returns:
+            A list of next token ids, one per request.
+        """
+        num_layers = len(requests[0].kv_cache)
+        batch_size = len(requests)
+        cache_lens = [req.kv_cache[0][0].shape[2] for req in requests]
+        max_cache_len = max(cache_lens)
+
+        # KV shape info from first request
+        ref_k = requests[0].kv_cache[0][0]
+        kv_heads = ref_k.shape[1]
+        head_dim = ref_k.shape[3]
+
+        # Stack the last generated tokens from each request
+        input_ids = torch.tensor(
+            [[req.output_ids[-1]] for req in requests],
+            dtype=torch.long,
+            device=self.device,
+        )
+        position_ids = torch.tensor(
+            [[cache_len] for cache_len in cache_lens],
+            dtype=torch.long,
+            device=self.device,
+        )
+
+        # Pre-allocate padded KV caches (zeros provide padding for free)
+        kv_caches = []
+        for layer in range(num_layers):
+            k_padded = torch.zeros(
+                batch_size,
+                kv_heads,
+                max_cache_len,
+                head_dim,
+                dtype=self.dtype,
+                device=self.device,
+            )
+            v_padded = torch.zeros(
+                batch_size,
+                kv_heads,
+                max_cache_len,
+                head_dim,
+                dtype=self.dtype,
+                device=self.device,
+            )
+            for i, (req, cl) in enumerate(zip(requests, cache_lens)):
+                k, v = req.kv_cache[layer]
+                k_padded[i, :, :cl, :] = k[0]
+                v_padded[i, :, :cl, :] = v[0]
+            kv_caches.append((k_padded, v_padded))
+
+        # Float attention mask — avoids SDPA's internal bool→float conversion
+        total_cache_len = max_cache_len + 1  # +1 for the new token
+        attn_mask = torch.full(
+            (batch_size, 1, 1, total_cache_len),
+            float("-inf"),
+            dtype=self.dtype,
+            device=self.device,
+        )
+        for i, cl in enumerate(cache_lens):
+            attn_mask[i, :, :, :cl] = 0.0
+            attn_mask[i, :, :, -1] = 0.0
+
+        # Runs one batched model forward
+        logits, new_kv_caches = self.model(
+            input_ids, position_ids, kv_caches, attn_mask
+        )
+
+        # Extract per-request KV (actual portion + new token)
+        for i, req in enumerate(requests):
+            cl = cache_lens[i]
+            new_len = cl + 1
+            new_kv = []
+            for layer in range(num_layers):
+                k, v = new_kv_caches[layer]
+                req_k = torch.empty(
+                    1,
+                    kv_heads,
+                    new_len,
+                    head_dim,
+                    dtype=self.dtype,
+                    device=self.device,
+                )
+                req_v = torch.empty(
+                    1,
+                    kv_heads,
+                    new_len,
+                    head_dim,
+                    dtype=self.dtype,
+                    device=self.device,
+                )
+                req_k[0, :, :cl, :] = k[i, :, :cl, :]
+                req_k[0, :, cl, :] = k[i, :, -1, :]
+                req_v[0, :, :cl, :] = v[i, :, :cl, :]
+                req_v[0, :, cl, :] = v[i, :, -1, :]
+                new_kv.append((req_k, req_v))
+            req.kv_cache = new_kv
+
+        return [
+            sample_token(logits[i, -1, :], req.sampling_params, req.output_ids)
+            for i, req in enumerate(requests)
+        ]
 
     def is_stop_token(self, token_id: int) -> bool:
         return token_id in self.stop_token_ids

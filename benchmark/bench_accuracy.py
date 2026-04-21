@@ -71,11 +71,13 @@ def load_mmlu(num_samples: int, subjects: list[str] | None = None):
 
     samples = []
     for row in ds:
-        samples.append({
-            "prompt": format_mmlu_prompt(row),
-            "gold": row["answer"],  # int 0-3
-            "subject": row["subject"],
-        })
+        samples.append(
+            {
+                "prompt": format_mmlu_prompt(row),
+                "gold": row["answer"],  # int 0-3
+                "subject": row["subject"],
+            }
+        )
     return samples
 
 
@@ -120,10 +122,12 @@ def load_gsm8k(num_samples: int):
 
     samples = []
     for row in ds:
-        samples.append({
-            "prompt": format_gsm8k_prompt(row),
-            "gold": parse_gsm8k_gold(row["answer"]),
-        })
+        samples.append(
+            {
+                "prompt": format_gsm8k_prompt(row),
+                "gold": parse_gsm8k_gold(row["answer"]),
+            }
+        )
     return samples
 
 
@@ -157,7 +161,8 @@ async def send_eval_request(
 
     t0 = time.perf_counter()
     async with session.post(
-        f"{base_url}/v1/chat/completions", json=payload,
+        f"{base_url}/v1/chat/completions",
+        json=payload,
     ) as resp:
         data = await resp.json()
     latency = time.perf_counter() - t0
@@ -192,7 +197,10 @@ async def run_eval(
 
             try:
                 text, latency = await send_eval_request(
-                    session, base_url, sample["prompt"], max_tokens,
+                    session,
+                    base_url,
+                    sample["prompt"],
+                    max_tokens,
                 )
             except Exception as e:
                 text = f"ERROR: {e}"
@@ -206,14 +214,16 @@ async def run_eval(
                 pred = parse_gsm8k_answer(text)
                 correct = pred is not None and pred == sample["gold"]
 
-            results.append(EvalResult(
-                prompt=sample["prompt"][:80],
-                gold=sample["gold"],
-                predicted=pred,
-                correct=correct,
-                model_output=text[:200],
-                latency=latency,
-            ))
+            results.append(
+                EvalResult(
+                    prompt=sample["prompt"][:80],
+                    gold=sample["gold"],
+                    predicted=pred,
+                    correct=correct,
+                    model_output=text[:200],
+                    latency=latency,
+                )
+            )
 
             completed += 1
             if completed % 10 == 0 or completed == total:
@@ -254,15 +264,20 @@ def print_report(results: list[EvalResult], dataset: str):
     if dataset == "mmlu":
         # Per-subject breakdown if we have subject info
         from collections import defaultdict
+
         # Not available from results directly, just show overall
         pass
 
     # Show some wrong examples
     wrong = [r for r in results if not r.correct]
     if wrong:
-        print(f"\n  Sample incorrect predictions ({min(5, len(wrong))} of {len(wrong)}):")
+        print(
+            f"\n  Sample incorrect predictions ({min(5, len(wrong))} of {len(wrong)}):"
+        )
         for r in wrong[:5]:
-            print(f"    Gold={r.gold}  Pred={r.predicted}  Output: {r.model_output[:80]}...")
+            print(
+                f"    Gold={r.gold}  Pred={r.predicted}  Output: {r.model_output[:80]}..."
+            )
 
 
 # ── Main ────────────────────────────────────────────────────────────────
@@ -271,15 +286,24 @@ def print_report(results: list[EvalResult], dataset: str):
 def main():
     p = argparse.ArgumentParser(description="Accuracy benchmark (MMLU / GSM8K)")
     p.add_argument(
-        "--dataset", type=str, default="mmlu", choices=["mmlu", "gsm8k"],
+        "--dataset",
+        type=str,
+        default="mmlu",
+        choices=["mmlu", "gsm8k"],
     )
     p.add_argument("--num-samples", type=int, default=200)
-    p.add_argument("--max-tokens", type=int, default=None,
-                   help="Max output tokens (default: 32 for MMLU, 512 for GSM8K)")
+    p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Max output tokens (default: 32 for MMLU, 512 for GSM8K)",
+    )
     p.add_argument("--concurrency", type=int, default=8)
     p.add_argument("--base-url", type=str, default="http://localhost:8000")
     p.add_argument(
-        "--subjects", type=str, default=None,
+        "--subjects",
+        type=str,
+        default=None,
         help="Comma-separated MMLU subjects to filter (e.g. 'abstract_algebra,anatomy')",
     )
     args = p.parse_args()

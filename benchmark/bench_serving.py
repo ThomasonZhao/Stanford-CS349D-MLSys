@@ -130,13 +130,21 @@ def prepare_requests(
         messages = [{"role": "user", "content": raw_prompt}]
         try:
             ids = tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True,
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
                 enable_thinking=False,
             )
         except TypeError:
             ids = tokenizer.apply_chat_template(
-                messages, tokenize=True, add_generation_prompt=True,
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
             )
+
+        # Yufei's fix https://edstem.org/us/courses/97365/discussion/7953686
+        if hasattr(ids, "keys") and "input_ids" in ids:
+            ids = ids["input_ids"]
 
         if len(ids) > req_input_len:
             # Truncate: decode back to text from truncated ids
@@ -154,13 +162,22 @@ def prepare_requests(
                 msgs = [{"role": "user", "content": padded}]
                 try:
                     test_ids = tokenizer.apply_chat_template(
-                        msgs, tokenize=True, add_generation_prompt=True,
+                        msgs,
+                        tokenize=True,
+                        add_generation_prompt=True,
                         enable_thinking=False,
                     )
                 except TypeError:
                     test_ids = tokenizer.apply_chat_template(
-                        msgs, tokenize=True, add_generation_prompt=True,
+                        msgs,
+                        tokenize=True,
+                        add_generation_prompt=True,
                     )
+
+                # Yufei's fix https://edstem.org/us/courses/97365/discussion/7953686
+                if hasattr(test_ids, "keys") and "input_ids" in test_ids:
+                    test_ids = test_ids["input_ids"]
+
                 if len(test_ids) >= req_input_len:
                     messages = msgs
                     actual_input_len = len(test_ids)
@@ -168,12 +185,16 @@ def prepare_requests(
         else:
             actual_input_len = len(ids)
 
-        requests.append({
-            "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
-            "max_tokens": req_output_len,
-            "input_len": actual_input_len,
-            "output_len": req_output_len,
-        })
+        requests.append(
+            {
+                "messages": [
+                    {"role": m["role"], "content": m["content"]} for m in messages
+                ],
+                "max_tokens": req_output_len,
+                "input_len": actual_input_len,
+                "output_len": req_output_len,
+            }
+        )
 
     return requests
 
@@ -201,7 +222,8 @@ async def send_request(
     metrics.start_time = time.perf_counter()
     try:
         async with session.post(
-            f"{base_url}/v1/chat/completions", json=payload,
+            f"{base_url}/v1/chat/completions",
+            json=payload,
         ) as resp:
             if resp.status != 200:
                 metrics.error = f"HTTP {resp.status}"
@@ -212,7 +234,7 @@ async def send_request(
                 decoded = line.decode("utf-8").strip()
                 if not decoded.startswith("data: "):
                     continue
-                data_str = decoded[len("data: "):]
+                data_str = decoded[len("data: ") :]
                 if data_str == "[DONE]":
                     break
                 try:
@@ -293,7 +315,20 @@ def print_summary_table(all_results: dict[int, list[RequestMetrics]]):
         f"{'TPOT_p50':>9}  {'TPOT_p99':>9}  "
         f"{'GenTok/s':>9}  {'OK':>4}"
     )
-    print(" " * 7 + "(ms)" + " " * 7 + "(ms)" + " " * 8 + "(ms)" + " " * 8 + "(ms)" + " " * 8 + "(ms)" + " " * 8 + "(ms)")
+    print(
+        " " * 7
+        + "(ms)"
+        + " " * 7
+        + "(ms)"
+        + " " * 8
+        + "(ms)"
+        + " " * 8
+        + "(ms)"
+        + " " * 8
+        + "(ms)"
+        + " " * 8
+        + "(ms)"
+    )
     print(f"{'-' * 100}")
 
     for conc in sorted(all_results.keys()):
@@ -304,7 +339,9 @@ def print_summary_table(all_results: dict[int, list[RequestMetrics]]):
             continue
 
         ttfts = np.array([r.ttft for r in ok if r.ttft is not None])
-        completions = np.array([r.completion_latency for r in ok if r.completion_latency is not None])
+        completions = np.array(
+            [r.completion_latency for r in ok if r.completion_latency is not None]
+        )
         tpots = np.array([r.tpot for r in ok if r.tpot is not None])
         total_out = sum(r.num_output_tokens for r in ok)
         total_time = max(r.end_time for r in ok) - min(r.start_time for r in ok)
@@ -330,7 +367,7 @@ async def async_main(args, requests_pool, concurrencies):
 
     for conc in concurrencies:
         # Use a fresh copy of requests each time
-        reqs = requests_pool[:args.num_requests]
+        reqs = requests_pool[: args.num_requests]
         print(f"\n  Running concurrency={conc} ({len(reqs)} requests)...", flush=True)
 
         t0 = time.perf_counter()
@@ -341,11 +378,15 @@ async def async_main(args, requests_pool, concurrencies):
 
         ok = [r for r in results if r.error is None]
         ttfts = np.array([r.ttft for r in ok if r.ttft is not None])
-        completions = np.array([r.completion_latency for r in ok if r.completion_latency is not None])
+        completions = np.array(
+            [r.completion_latency for r in ok if r.completion_latency is not None]
+        )
         tpots = np.array([r.tpot for r in ok if r.tpot is not None])
         total_out = sum(r.num_output_tokens for r in ok)
 
-        print_single_result(conc, len(ok), total_time, ttfts, completions, tpots, total_out)
+        print_single_result(
+            conc, len(ok), total_time, ttfts, completions, tpots, total_out
+        )
 
     print_summary_table(all_results)
 
@@ -353,17 +394,31 @@ async def async_main(args, requests_pool, concurrencies):
 def main():
     p = argparse.ArgumentParser(description="Serving benchmark (throughput + latency)")
     p.add_argument("--base-url", type=str, default="http://localhost:8000")
-    p.add_argument("--model", type=str, default=None,
-                   help="HuggingFace model id (for tokenizer). Auto-detected from server if not set.")
+    p.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="HuggingFace model id (for tokenizer). Auto-detected from server if not set.",
+    )
     p.add_argument("--num-requests", type=int, default=100)
-    p.add_argument("--input-len", type=int, default=1024,
-                   help="Target input length in tokens")
-    p.add_argument("--output-len", type=int, default=1024,
-                   help="Target output length in tokens")
-    p.add_argument("--randomness", type=float, default=1.0,
-                   help="Length randomness: 1.0=fixed, 0.0=uniform [1,target], 0.5=[target/2,target]")
-    p.add_argument("--concurrencies", type=str, default="1,2,4,8,16,32",
-                   help="Comma-separated concurrency levels to sweep")
+    p.add_argument(
+        "--input-len", type=int, default=1024, help="Target input length in tokens"
+    )
+    p.add_argument(
+        "--output-len", type=int, default=1024, help="Target output length in tokens"
+    )
+    p.add_argument(
+        "--randomness",
+        type=float,
+        default=1.0,
+        help="Length randomness: 1.0=fixed, 0.0=uniform [1,target], 0.5=[target/2,target]",
+    )
+    p.add_argument(
+        "--concurrencies",
+        type=str,
+        default="1,2,4,8,16,32",
+        help="Comma-separated concurrency levels to sweep",
+    )
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
@@ -374,12 +429,16 @@ def main():
     model_id = args.model
     if model_id is None:
         import requests as req_lib
+
         try:
             resp = req_lib.get(f"{args.base_url}/v1/models", timeout=5)
             model_id = resp.json()["data"][0]["id"]
             print(f"  Auto-detected model: {model_id}", flush=True)
         except Exception:
-            print("  ERROR: Could not detect model from server. Use --model to specify.", flush=True)
+            print(
+                "  ERROR: Could not detect model from server. Use --model to specify.",
+                flush=True,
+            )
             sys.exit(1)
 
     print(f"\n{'=' * 60}")
@@ -396,6 +455,7 @@ def main():
     # Load tokenizer
     print("\n  Loading tokenizer...", flush=True)
     from transformers import AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
     # Load prompts from WildChat
@@ -404,8 +464,12 @@ def main():
     # Prepare requests with controlled lengths
     print(f"  Preparing {args.num_requests} requests...", flush=True)
     requests_pool = prepare_requests(
-        prompts, tokenizer, args.num_requests,
-        args.input_len, args.output_len, args.randomness,
+        prompts,
+        tokenizer,
+        args.num_requests,
+        args.input_len,
+        args.output_len,
+        args.randomness,
     )
     actual_in = [r["input_len"] for r in requests_pool]
     actual_out = [r["output_len"] for r in requests_pool]
