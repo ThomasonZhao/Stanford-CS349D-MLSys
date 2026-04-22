@@ -1,6 +1,7 @@
 # CS349D Writeup - Milestone 1: Batching & Continuous Batching
 
-Thomason Zhao, Joey Ji
+Thomason Zhao (changyuz)
+Joey Ji (junyiji3)
 
 ## Hardware Setup
 
@@ -11,7 +12,7 @@ All experiments were run on an AWS `g4dn.2xlarge` instance:
 - **GPU**: NVIDIA T4 (16 GB GDDR6)
 - **Model**: Qwen/Qwen3-4B-Instruct-2507, float16
 
-We chose the `g4dn.2xlarge` for its balance of cost and capability. The T4's 16 GB VRAM is sufficient for the Qwen3-4B model in float16, and the 8 CPU cores provide enough headroom for request handling and tokenization without bottlenecking the GPU.
+We chose the `g4dn.2xlarge` for its balance of cost and capability. The T4's 16 GB VRAM is sufficient for the Qwen3-4B model in float16 (model is around 8 GB), but later we figure out it actually not quite sufficient for larger batches. The 8 CPU cores provide enough headroom for request handling and tokenization without bottlenecking the GPU.
 
 **Note on dtype: float16 vs bfloat16.** The default engine configuration uses bfloat16, but NVIDIA GPUs only natively support bfloat16 starting from the Ampere architecture (A100 and later). On older GPUs such as the T4 (Turing) and V100 (Volta), bfloat16 operations are emulated by converting to float32 and back, which significantly degrades inference throughput. We confirmed this empirically -- running our continuous batching implementation in bfloat16 on the T4 yielded substantially worse results:
 
