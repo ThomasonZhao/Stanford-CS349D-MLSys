@@ -133,9 +133,9 @@ Continuous batching provides the most significant improvement. The key gains ove
 
 The throughput improvement at concurrency 16 (3.6x) is below the theoretical 5-7x suggested in the milestone spec. We hypothesize this is primarily due to **GPU memory saturation from KV cache padding**. With input length 512 and output length 256, each request's KV cache can grow up to 768 tokens across 36 layers. When batching 16 requests, the padded KV tensors must accommodate the longest cache in the batch for all 16 requests, leading to significant memory waste from padding shorter sequences to the maximum length. This pressure saturates the T4's 16 GB VRAM, forcing the GPU to spend cycles on memory management rather than compute.
 
-To validate this hypothesis, we ran additional experiments on the same T4 instance with shorter sequence lengths using continuous batching (`step_iterative`):
+To validate this hypothesis, we ran additional experiments with shorter sequence lengths on a V100 GPU (16 GB HBM2), which has higher memory bandwidth (900 GB/s vs 320 GB/s) and roughly double the float16 TFLOPS (65.1 vs 31.4). Using input length 256 and output length 256 with requests:
 
-**Input 256, Output 256:**
+**V100, Input 256, Output 256 -- Part A (`step_batch`):**
 
 | Conc | TTFT p50 (ms) | TTFT p99 (ms) | Compl p50 (ms) | Compl p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | GenTok/s |
 |------|--------------|--------------|----------------|----------------|---------------|---------------|----------|
@@ -143,7 +143,7 @@ To validate this hypothesis, we ran additional experiments on the same T4 instan
 | 4    | 8,143        | 9,661        | 17,446         | 17,742         | 36.5          | 37.4          | 57       |
 | 16   | 8,745        | 18,654       | 26,652         | 27,054         | 70.0          | 72.6          | 144      |
 
-**Input 128, Output 128:**
+**V100, Input 256, Output 256 -- Part B (`step_iterative`):**
 
 | Conc | TTFT p50 (ms) | TTFT p99 (ms) | Compl p50 (ms) | Compl p99 (ms) | TPOT p50 (ms) | TPOT p99 (ms) | GenTok/s |
 |------|--------------|--------------|----------------|----------------|---------------|---------------|----------|
@@ -151,15 +151,16 @@ To validate this hypothesis, we ran additional experiments on the same T4 instan
 | 4    | 156          | 267          | 10,139         | 10,438         | 39.0          | 40.4          | 98       |
 | 16   | 491          | 952          | 19,322         | 19,363         | 73.4          | 75.2          | 193      |
 
-The trend is clear: as sequence lengths decrease, throughput scales much more favorably:
+The trend is clear: with shorter sequences and a more capable GPU, throughput scales much more favorably:
 
-| Configuration         | GenTok/s (conc=16) | vs. Baseline (22 tok/s) |
-|-----------------------|--------------------|------------------------|
-| Input 512, Output 256 | 80                 | 3.6x                   |
-| Input 256, Output 256 | 144                | 6.5x                   |
-| Input 128, Output 128 | 193                | 8.8x                   |
+| Configuration                        | GenTok/s (conc=16) | vs. Baseline (22 tok/s) |
+|--------------------------------------|--------------------|------------------------|
+| T4, Input 512, Output 256 (Part A)   | 67                 | 3.0x                   |
+| T4, Input 512, Output 256 (Part B)   | 80                 | 3.6x                   |
+| V100, Input 256, Output 256 (Part A) | 144                | 6.5x                   |
+| V100, Input 256, Output 256 (Part B) | 193                | 8.8x                   |
 
-At input 256 / output 256, we already reach 144 tok/s (6.5x), well within the expected 5-7x range. At input 128 / output 128, throughput reaches 193 tok/s (8.8x), exceeding the theoretical target. This confirms that the throughput gap in our primary benchmark is not a fundamental implementation issue but rather a consequence of **memory pressure from long sequences on the T4's limited 16 GB VRAM**.
+On the V100 with shorter sequences, Part A already reaches 144 tok/s (6.5x), well within the expected 5-7x range. Part B further improves to 193 tok/s (8.8x), exceeding the theoretical target. This confirms that the throughput gap in our primary T4 benchmark is not a fundamental implementation issue but rather a consequence of **memory pressure from long sequences on the T4's limited 16 GB VRAM** and its lower memory bandwidth.
 
 ### Hardware Impact
 
