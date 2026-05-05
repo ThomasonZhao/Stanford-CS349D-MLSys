@@ -26,6 +26,13 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
+try:
+    from flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
+    from flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
+except Exception:  # pragma: no cover - optional CUDA-only dependency
+    _flash_attn_varlen_func = None
+    _flash_attn_with_kvcache = None
+
 
 # ── Config ──────────────────────────────────────────────────────────────
 
@@ -64,6 +71,23 @@ class ModelConfig:
             max_position_embeddings=getattr(hf, "max_position_embeddings", 4096),
             tie_word_embeddings=getattr(hf, "tie_word_embeddings", False),
         )
+
+
+@dataclass
+class PagedContext:
+    """Paged KV state shared by all transformer layers for one forward pass."""
+
+    k_cache_pool: list[torch.Tensor]
+    v_cache_pool: list[torch.Tensor]
+    block_table: torch.Tensor | None
+    cache_seqlens: torch.Tensor | None
+    is_prefill: bool
+
+    cu_seqlens_q: torch.Tensor | None = None
+    cu_seqlens_k: torch.Tensor | None = None
+    max_seqlen_q: int | None = None
+    max_seqlen_k: int | None = None
+    slot_mapping: torch.Tensor | None = None
 
 
 # ── Building blocks ─────────────────────────────────────────────────────
@@ -193,6 +217,162 @@ class Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
+    def _expand_kv_for_gqa(
+        self, k: torch.Tensor, v: torch.Tensor, bsz: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.num_kv_groups <= 1:
+            return k, v
+        k = k[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
+        k = k.reshape(bsz, self.num_heads, -1, self.head_dim)
+        v = v[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
+        v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
+        return k, v
+
+    def _paged_prefill_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        if paged_ctx.slot_mapping is None:
+            raise ValueError("paged prefill requires slot_mapping")
+        if paged_ctx.cu_seqlens_q is None or paged_ctx.cu_seqlens_k is None:
+            raise ValueError("paged prefill requires cu_seqlens")
+        if paged_ctx.max_seqlen_q is None or paged_ctx.max_seqlen_k is None:
+            raise ValueError("paged prefill requires max_seqlen values")
+        if q.shape[0] != 1:
+            raise ValueError("packed paged prefill expects batch size 1")
+
+        k_cache = paged_ctx.k_cache_pool[layer_idx]
+        v_cache = paged_ctx.v_cache_pool[layer_idx]
+        k_packed = k[0].transpose(0, 1).contiguous()
+        v_packed = v[0].transpose(0, 1).contiguous()
+        k_cache.view(-1, self.num_kv_heads, self.head_dim)[
+            paged_ctx.slot_mapping
+        ] = k_packed
+        v_cache.view(-1, self.num_kv_heads, self.head_dim)[
+            paged_ctx.slot_mapping
+        ] = v_packed
+
+        q_packed = q[0].transpose(0, 1).contiguous()
+        if _flash_attn_varlen_func is not None and q_packed.is_cuda:
+            out_packed = _flash_attn_varlen_func(
+                q_packed,
+                k_packed,
+                v_packed,
+                paged_ctx.cu_seqlens_q,
+                paged_ctx.cu_seqlens_k,
+                paged_ctx.max_seqlen_q,
+                paged_ctx.max_seqlen_k,
+                causal=True,
+            )
+            return out_packed.transpose(0, 1).unsqueeze(0)
+
+        k_full, v_full = self._expand_kv_for_gqa(k, v, bsz=1)
+        total_tokens = q.shape[2]
+        seq_lens = (paged_ctx.cu_seqlens_q[1:] - paged_ctx.cu_seqlens_q[:-1]).to(
+            device=q.device, dtype=torch.long
+        )
+        segment_ids = torch.repeat_interleave(
+            torch.arange(seq_lens.numel(), device=q.device), seq_lens
+        )
+        token_idx = torch.arange(total_tokens, device=q.device)
+        allowed = (segment_ids[:, None] == segment_ids[None, :]) & (
+            token_idx[:, None] >= token_idx[None, :]
+        )
+        attn_mask = torch.full(
+            (total_tokens, total_tokens),
+            float("-inf"),
+            dtype=q.dtype,
+            device=q.device,
+        )
+        attn_mask.masked_fill_(allowed, 0.0)
+        return F.scaled_dot_product_attention(
+            q,
+            k_full,
+            v_full,
+            attn_mask=attn_mask.view(1, 1, total_tokens, total_tokens),
+        )
+
+    def _paged_decode_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        if paged_ctx.block_table is None or paged_ctx.cache_seqlens is None:
+            raise ValueError("paged decode requires block_table and cache_seqlens")
+
+        k_cache = paged_ctx.k_cache_pool[layer_idx]
+        v_cache = paged_ctx.v_cache_pool[layer_idx]
+
+        if _flash_attn_with_kvcache is not None and q.is_cuda:
+            try:
+                out = _flash_attn_with_kvcache(
+                    q.transpose(1, 2).contiguous(),
+                    k_cache,
+                    v_cache,
+                    k=k.transpose(1, 2).contiguous(),
+                    v=v.transpose(1, 2).contiguous(),
+                    cache_seqlens=paged_ctx.cache_seqlens,
+                    block_table=paged_ctx.block_table,
+                    causal=True,
+                )
+                return out.transpose(1, 2).contiguous()
+            except Exception:
+                logger.debug(
+                    "flash-attn paged decode failed; using fallback", exc_info=True
+                )
+
+        bsz, _, seq_len, _ = q.shape
+        if paged_ctx.slot_mapping is not None:
+            slot_mapping = paged_ctx.slot_mapping
+        else:
+            page_size = k_cache.shape[1]
+            cache_pos = paged_ctx.cache_seqlens.to(torch.long)
+            page_offsets = cache_pos // page_size
+            in_page_offsets = cache_pos % page_size
+            page_ids = paged_ctx.block_table.gather(
+                1, page_offsets.view(-1, 1).to(paged_ctx.block_table.device)
+            ).squeeze(1)
+            slot_mapping = page_ids.to(torch.long) * page_size + in_page_offsets
+
+        if seq_len != 1:
+            raise ValueError("paged decode fallback currently expects one token")
+        k_new = k.transpose(1, 2).contiguous().view(-1, self.num_kv_heads, self.head_dim)
+        v_new = v.transpose(1, 2).contiguous().view(-1, self.num_kv_heads, self.head_dim)
+        k_cache.view(-1, self.num_kv_heads, self.head_dim)[slot_mapping] = k_new
+        v_cache.view(-1, self.num_kv_heads, self.head_dim)[slot_mapping] = v_new
+
+        page_size = k_cache.shape[1]
+        kv_lens = paged_ctx.cache_seqlens.to(torch.long) + seq_len
+        max_kv_len = int(kv_lens.max().item())
+        positions = torch.arange(max_kv_len, device=q.device)
+        page_offsets = positions // page_size
+        in_page_offsets = positions % page_size
+        page_ids = paged_ctx.block_table[:, page_offsets].to(torch.long)
+        flat_offsets = page_ids * page_size + in_page_offsets
+
+        flat_k = k_cache.view(-1, self.num_kv_heads, self.head_dim)
+        flat_v = v_cache.view(-1, self.num_kv_heads, self.head_dim)
+        gathered_k = flat_k[flat_offsets].permute(0, 2, 1, 3).contiguous()
+        gathered_v = flat_v[flat_offsets].permute(0, 2, 1, 3).contiguous()
+        gathered_k, gathered_v = self._expand_kv_for_gqa(gathered_k, gathered_v, bsz)
+
+        mask_positions = torch.arange(max_kv_len, device=q.device).view(1, 1, 1, -1)
+        valid_lens = kv_lens.to(q.device).view(bsz, 1, 1, 1)
+        attn_mask = torch.zeros(
+            bsz, 1, 1, max_kv_len, dtype=q.dtype, device=q.device
+        )
+        attn_mask.masked_fill_(mask_positions >= valid_lens, float("-inf"))
+        return F.scaled_dot_product_attention(
+            q, gathered_k, gathered_v, attn_mask=attn_mask
+        )
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -200,6 +380,8 @@ class Attention(nn.Module):
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
+        layer_idx: int | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
@@ -210,6 +392,8 @@ class Attention(nn.Module):
             attention_mask: optional float mask (batch, 1, q_len, kv_len)
                             for batched decode with padded KV; 0 = attend,
                             -inf = ignore.
+            paged_ctx:     optional paged KV cache context.
+            layer_idx:     transformer layer index when using paged_ctx.
 
         Returns:
             output:       (batch, seq_len, hidden_size)
@@ -242,6 +426,16 @@ class Attention(nn.Module):
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
 
+        if paged_ctx is not None:
+            if layer_idx is None:
+                raise ValueError("layer_idx is required for paged attention")
+            if paged_ctx.is_prefill:
+                out = self._paged_prefill_attention(q, k, v, paged_ctx, layer_idx)
+            else:
+                out = self._paged_decode_attention(q, k, v, paged_ctx, layer_idx)
+            out = out.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
+            return self.o_proj(out), (k, v)
+
         # Append to KV cache
         if kv_cache is not None:
             k = torch.cat([kv_cache[0], k], dim=2)
@@ -249,11 +443,7 @@ class Attention(nn.Module):
         new_kv = (k, v)
 
         # GQA: expand KV heads to match Q heads
-        if self.num_kv_groups > 1:
-            k = k[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            k = k.reshape(bsz, self.num_heads, -1, self.head_dim)
-            v = v[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
+        k, v = self._expand_kv_for_gqa(k, v, bsz)
 
         # Batched decode passes an explicit float mask; otherwise fall
         # back to the is_causal kernel path.
@@ -312,10 +502,14 @@ class TransformerBlock(nn.Module):
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
+        layer_idx: int | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         residual = hidden
         hidden = self.input_layernorm(hidden)
-        hidden, new_kv = self.self_attn(hidden, cos, sin, kv_cache, attention_mask)
+        hidden, new_kv = self.self_attn(
+            hidden, cos, sin, kv_cache, attention_mask, paged_ctx, layer_idx
+        )
         hidden = residual + hidden
 
         residual = hidden
@@ -347,6 +541,7 @@ class TransformerModel(nn.Module):
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Args:
@@ -354,6 +549,7 @@ class TransformerModel(nn.Module):
             position_ids:   (batch, seq_len)
             kv_caches:      list of per-layer (key, value) caches, or None
             attention_mask: optional float mask for batched-decode SDPA
+            paged_ctx:      optional paged KV cache context
 
         Returns:
             hidden:         (batch, seq_len, hidden_size)
@@ -365,7 +561,15 @@ class TransformerModel(nn.Module):
         new_kv_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
         for i, layer in enumerate(self.layers):
             kv = kv_caches[i] if kv_caches is not None else None
-            hidden, new_kv = layer(hidden, cos, sin, kv, attention_mask)
+            hidden, new_kv = layer(
+                hidden,
+                cos,
+                sin,
+                kv,
+                attention_mask,
+                paged_ctx=paged_ctx,
+                layer_idx=i,
+            )
             new_kv_caches.append(new_kv)
 
         hidden = self.norm(hidden)
@@ -392,6 +596,7 @@ class CausalLM(nn.Module):
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Returns:
@@ -399,7 +604,7 @@ class CausalLM(nn.Module):
             new_kv_caches: per-layer KV caches
         """
         hidden, new_kv_caches = self.model(
-            input_ids, position_ids, kv_caches, attention_mask
+            input_ids, position_ids, kv_caches, attention_mask, paged_ctx
         )
         if self.config.tie_word_embeddings:
             logits = F.linear(hidden, self.model.embed_tokens.weight)

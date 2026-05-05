@@ -27,7 +27,8 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 
 from miniengine.core import Request
-from miniengine.model import CausalLM, ModelConfig, load_weights
+from miniengine.kv_memory_pool import KVMemoryPool
+from miniengine.model import CausalLM, ModelConfig, PagedContext, load_weights
 from miniengine.sampler import sample_token
 
 logger = logging.getLogger(__name__)
@@ -42,10 +43,15 @@ class Engine:
         dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         mode: str = "batched",
+        page_size: int = 32,
+        mem_fraction_static: float = 0.85,
     ):
         self.device = device
         self.dtype = dtype
         self.mode = mode
+        self.page_size = page_size
+        self.mem_fraction_static = mem_fraction_static
+        self.kv_pool: KVMemoryPool | None = None
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
         logger.info("Loading tokenizer from %s …", model_path)
@@ -76,6 +82,24 @@ class Engine:
         load_weights(self.model, model_path, dtype=dtype, device=device)
         self.model.eval()
 
+        if mode == "paged":
+            bytes_budget = self._compute_kv_budget(mem_fraction_static)
+            self.kv_pool = KVMemoryPool.from_budget(
+                num_layers=config.num_hidden_layers,
+                num_kv_heads=config.num_key_value_heads,
+                head_dim=config.head_dim,
+                page_size=page_size,
+                dtype=dtype,
+                device=device,
+                bytes_budget=bytes_budget,
+            )
+            logger.info(
+                "Paged KV pool ready  pages=%d  page_size=%d  free=%d",
+                self.kv_pool.num_pages,
+                self.kv_pool.page_size,
+                self.kv_pool.num_free,
+            )
+
         # ── Stop tokens ─────────────────────────────────────────────────
         self.stop_token_ids: set[int] = set()
         if self.tokenizer.eos_token_id is not None:
@@ -95,6 +119,31 @@ class Engine:
             self.stop_token_ids,
             sum(p.numel() for p in self.model.parameters()) // 1_000_000,
         )
+
+    def _compute_kv_budget(self, mem_fraction_static: float) -> int:
+        if not 0 < mem_fraction_static <= 1:
+            raise ValueError("mem_fraction_static must be in (0, 1]")
+
+        model_param_bytes = sum(
+            p.numel() * p.element_size() for p in self.model.parameters()
+        )
+        device = torch.device(self.device)
+        if device.type == "cuda" and torch.cuda.is_available():
+            total_mem = torch.cuda.get_device_properties(device).total_memory
+            safety_margin = 512 * 1024 * 1024
+        else:
+            total_mem = model_param_bytes + 512 * 1024 * 1024
+            safety_margin = 64 * 1024 * 1024
+
+        static_budget = int(mem_fraction_static * total_mem)
+        kv_budget = static_budget - model_param_bytes - safety_margin
+        if kv_budget <= 0:
+            raise RuntimeError(
+                "Not enough static memory budget for paged KV cache "
+                f"(static_budget={static_budget}, model_params={model_param_bytes}, "
+                f"safety_margin={safety_margin})"
+            )
+        return kv_budget
 
     # ── Tokenization ────────────────────────────────────────────────────
 
@@ -116,6 +165,35 @@ class Engine:
     def decode_token(self, token_id: int) -> str:
         """Decode a single token id back to a string."""
         return self.tokenizer.decode([token_id], skip_special_tokens=True)
+
+    def _require_kv_pool(self) -> KVMemoryPool:
+        if self.kv_pool is None:
+            raise RuntimeError("paged KV pool is not initialized")
+        return self.kv_pool
+
+    def _make_paged_context(
+        self,
+        *,
+        is_prefill: bool,
+        block_table: torch.Tensor | None,
+        cache_seqlens: torch.Tensor | None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+        slot_mapping: torch.Tensor | None = None,
+    ) -> PagedContext:
+        pool = self._require_kv_pool()
+        return PagedContext(
+            k_cache_pool=pool.k_caches,
+            v_cache_pool=pool.v_caches,
+            block_table=block_table,
+            cache_seqlens=cache_seqlens,
+            is_prefill=is_prefill,
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=max_seqlen,
+            slot_mapping=slot_mapping,
+        )
 
     # ── Forward passes ──────────────────────────────────────────────────
 
@@ -171,6 +249,187 @@ class Engine:
         return sample_token(
             logits[:, -1, :], request.sampling_params, request.output_ids
         )
+
+    @torch.inference_mode()
+    def paged_prefill(self, requests: list[Request]) -> list[int]:
+        """
+        Packed prefill for paged mode.
+
+        Prompts are flattened into one sequence with per-request RoPE
+        positions and block-diagonal causal attention. Fresh K/V values
+        are written directly into each request's allocated pool pages.
+        """
+        if not requests:
+            return []
+
+        pool = self._require_kv_pool()
+        prompt_lens = [req.num_input_tokens for req in requests]
+        if any(length <= 0 for length in prompt_lens):
+            raise ValueError("paged prefill requires non-empty prompts")
+
+        page_counts = [pool.pages_needed(length) for length in prompt_lens]
+        total_pages = sum(page_counts)
+        if total_pages > pool.num_free:
+            raise RuntimeError(
+                f"KV pool OOM during prefill: need {total_pages} pages, "
+                f"have {pool.num_free} free"
+            )
+
+        allocated: list[list[int]] = []
+        try:
+            for req, num_pages in zip(requests, page_counts):
+                req.page_table = pool.allocate(num_pages)
+                allocated.append(req.page_table)
+
+            flat_ids: list[int] = []
+            flat_positions: list[int] = []
+            slot_mapping: list[int] = []
+            cu_values = [0]
+            for req in requests:
+                flat_ids.extend(req.input_ids)
+                flat_positions.extend(range(req.num_input_tokens))
+                for pos in range(req.num_input_tokens):
+                    page_idx = req.page_table[pos // pool.page_size]
+                    slot_mapping.append(
+                        page_idx * pool.page_size + pos % pool.page_size
+                    )
+                cu_values.append(cu_values[-1] + req.num_input_tokens)
+
+            input_ids = torch.tensor(
+                [flat_ids], dtype=torch.long, device=self.device
+            )
+            position_ids = torch.tensor(
+                [flat_positions], dtype=torch.long, device=self.device
+            )
+            cu_seqlens = torch.tensor(
+                cu_values, dtype=torch.int32, device=self.device
+            )
+            slot_mapping_tensor = torch.tensor(
+                slot_mapping, dtype=torch.long, device=self.device
+            )
+            paged_ctx = self._make_paged_context(
+                is_prefill=True,
+                block_table=None,
+                cache_seqlens=None,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max(prompt_lens),
+                slot_mapping=slot_mapping_tensor,
+            )
+
+            logits, _ = self.model(
+                input_ids,
+                position_ids,
+                kv_caches=None,
+                paged_ctx=paged_ctx,
+            )
+
+            token_ids: list[int] = []
+            for req, end_idx in zip(requests, cu_values[1:]):
+                req.cache_len = req.num_input_tokens
+                token_ids.append(
+                    sample_token(
+                        logits[:, end_idx - 1, :],
+                        req.sampling_params,
+                        req.output_ids,
+                    )
+                )
+            return token_ids
+        except Exception:
+            for pages in allocated:
+                if pages:
+                    pool.free(pages)
+            for req in requests:
+                req.page_table = []
+                req.cache_len = 0
+            raise
+
+    @torch.inference_mode()
+    def paged_decode(self, requests: list[Request]) -> list[int]:
+        """Decode one token per request using the paged KV cache."""
+        if not requests:
+            return []
+
+        pool = self._require_kv_pool()
+        grow_requests = [
+            req for req in requests if req.cache_len % pool.page_size == 0
+        ]
+        if len(grow_requests) > pool.num_free:
+            raise RuntimeError(
+                f"KV pool OOM during decode: need {len(grow_requests)} pages, "
+                f"have {pool.num_free} free"
+            )
+
+        grown_pages: list[tuple[Request, int]] = []
+        try:
+            for req in grow_requests:
+                page = pool.allocate(1)[0]
+                req.page_table.append(page)
+                grown_pages.append((req, page))
+
+            max_pages = max(len(req.page_table) for req in requests)
+            block_table_rows = [
+                req.page_table + [0] * (max_pages - len(req.page_table))
+                for req in requests
+            ]
+            block_table = torch.tensor(
+                block_table_rows, dtype=torch.int32, device=self.device
+            )
+            cache_seqlens = torch.tensor(
+                [req.cache_len for req in requests],
+                dtype=torch.int32,
+                device=self.device,
+            )
+            slot_mapping = []
+            for req in requests:
+                page_idx = req.page_table[req.cache_len // pool.page_size]
+                slot_mapping.append(
+                    page_idx * pool.page_size + req.cache_len % pool.page_size
+                )
+            slot_mapping_tensor = torch.tensor(
+                slot_mapping, dtype=torch.long, device=self.device
+            )
+
+            input_ids = torch.tensor(
+                [[req.output_ids[-1]] for req in requests],
+                dtype=torch.long,
+                device=self.device,
+            )
+            position_ids = torch.tensor(
+                [[req.cache_len] for req in requests],
+                dtype=torch.long,
+                device=self.device,
+            )
+            paged_ctx = self._make_paged_context(
+                is_prefill=False,
+                block_table=block_table,
+                cache_seqlens=cache_seqlens,
+                slot_mapping=slot_mapping_tensor,
+            )
+
+            logits, _ = self.model(
+                input_ids,
+                position_ids,
+                kv_caches=None,
+                paged_ctx=paged_ctx,
+            )
+
+            token_ids: list[int] = []
+            for i, req in enumerate(requests):
+                req.cache_len += 1
+                token_ids.append(
+                    sample_token(
+                        logits[i : i + 1, -1, :],
+                        req.sampling_params,
+                        req.output_ids,
+                    )
+                )
+            return token_ids
+        except Exception:
+            for req, page in reversed(grown_pages):
+                if req.page_table and req.page_table[-1] == page:
+                    req.page_table.pop()
+                pool.free([page])
+            raise
 
     def is_stop_token(self, token_id: int) -> bool:
         return token_id in self.stop_token_ids
