@@ -45,12 +45,14 @@ class Engine:
         mode: str = "batched",
         page_size: int = 32,
         mem_fraction_static: float = 0.85,
+        torch_compile: bool = False,
     ):
         self.device = device
         self.dtype = dtype
         self.mode = mode
         self.page_size = page_size
         self.mem_fraction_static = mem_fraction_static
+        self.torch_compile = torch_compile
         self.kv_pool: KVMemoryPool | None = None
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
@@ -81,6 +83,10 @@ class Engine:
             self.model = CausalLM(config)
         load_weights(self.model, model_path, dtype=dtype, device=device)
         self.model.eval()
+
+        if torch_compile:
+            logger.info("Enabling torch.compile for paged decode MLPs")
+            self.model.enable_torch_compile()
 
         if mode == "paged":
             bytes_budget = self._compute_kv_budget(mem_fraction_static)

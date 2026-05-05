@@ -490,10 +490,14 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.self_attn = Attention(config)
         self.mlp = MLP(config)
+        self._compiled_decode_mlp: nn.Module | None = None
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
+
+    def enable_torch_compile(self) -> None:
+        self._compiled_decode_mlp = torch.compile(self.mlp, dynamic=True)
 
     def forward(
         self,
@@ -504,6 +508,7 @@ class TransformerBlock(nn.Module):
         attention_mask: torch.Tensor | None = None,
         paged_ctx: PagedContext | None = None,
         layer_idx: int | None = None,
+        use_compiled_mlp: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         residual = hidden
         hidden = self.input_layernorm(hidden)
@@ -514,7 +519,10 @@ class TransformerBlock(nn.Module):
 
         residual = hidden
         hidden = self.post_attention_layernorm(hidden)
-        hidden = self.mlp(hidden)
+        if use_compiled_mlp and self._compiled_decode_mlp is not None:
+            hidden = self._compiled_decode_mlp(hidden)
+        else:
+            hidden = self.mlp(hidden)
         hidden = residual + hidden
 
         return hidden, new_kv
@@ -534,6 +542,12 @@ class TransformerModel(nn.Module):
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = RotaryEmbedding(config.head_dim, theta=config.rope_theta)
+        self.use_torch_compile = False
+
+    def enable_torch_compile(self) -> None:
+        for layer in self.layers:
+            layer.enable_torch_compile()
+        self.use_torch_compile = True
 
     def forward(
         self,
@@ -557,6 +571,11 @@ class TransformerModel(nn.Module):
         """
         hidden = self.embed_tokens(input_ids)
         cos, sin = self.rotary_emb(position_ids)
+        use_compiled_mlp = (
+            self.use_torch_compile
+            and paged_ctx is not None
+            and not paged_ctx.is_prefill
+        )
 
         new_kv_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
         for i, layer in enumerate(self.layers):
@@ -569,6 +588,7 @@ class TransformerModel(nn.Module):
                 attention_mask,
                 paged_ctx=paged_ctx,
                 layer_idx=i,
+                use_compiled_mlp=use_compiled_mlp,
             )
             new_kv_caches.append(new_kv)
 
@@ -589,6 +609,9 @@ class CausalLM(nn.Module):
         self.model = TransformerModel(config)
         if not config.tie_word_embeddings:
             self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+    def enable_torch_compile(self) -> None:
+        self.model.enable_torch_compile()
 
     def forward(
         self,
