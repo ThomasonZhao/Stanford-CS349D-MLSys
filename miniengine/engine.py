@@ -29,7 +29,7 @@ from transformers import AutoTokenizer
 from miniengine.core import Request
 from miniengine.kv_memory_pool import KVMemoryPool
 from miniengine.model import CausalLM, ModelConfig, PagedContext, load_weights
-from miniengine.sampler import sample_token
+from miniengine.sampler import sample_token, sample_tokens_batched
 
 logger = logging.getLogger(__name__)
 
@@ -541,16 +541,13 @@ class Engine:
                 paged_ctx=paged_ctx,
             )
 
-            token_ids: list[int] = []
-            for i, req in enumerate(requests):
+            token_ids = sample_tokens_batched(
+                logits[:, -1, :],
+                [req.sampling_params for req in requests],
+                [req.output_ids for req in requests],
+            )
+            for req in requests:
                 req.cache_len += 1
-                token_ids.append(
-                    sample_token(
-                        logits[i : i + 1, -1, :],
-                        req.sampling_params,
-                        req.output_ids,
-                    )
-                )
             return token_ids
         except Exception:
             for req, page in reversed(grown_pages):
