@@ -38,6 +38,7 @@ class KVMemoryPool:
         head_dim: int,
         dtype: torch.dtype,
         device: str,
+        reserve_scratch_page: bool = False,
     ) -> None:
         if num_pages <= 0:
             raise ValueError("num_pages must be positive")
@@ -49,6 +50,8 @@ class KVMemoryPool:
             raise ValueError("num_kv_heads must be positive")
         if head_dim <= 0:
             raise ValueError("head_dim must be positive")
+        if reserve_scratch_page and num_pages < 2:
+            raise ValueError("reserve_scratch_page requires num_pages >= 2")
 
         self.num_pages = num_pages
         self.page_size = page_size
@@ -67,8 +70,13 @@ class KVMemoryPool:
             torch.empty(shape, dtype=dtype, device=self.device)
             for _ in range(num_layers)
         ]
-        self._free: deque[int] = deque(range(num_pages))
-        self._free_set: set[int] = set(range(num_pages))
+        # Scratch page for CUDA-graph padded rows: never allocated to a real
+        # request, so flash-attn's in-place K/V write into the padded slots
+        # cannot corrupt any active request's cache.
+        self._scratch_page_idx: int | None = 0 if reserve_scratch_page else None
+        first_free = 1 if reserve_scratch_page else 0
+        self._free: deque[int] = deque(range(first_free, num_pages))
+        self._free_set: set[int] = set(range(first_free, num_pages))
 
     def allocate(self, num_pages: int) -> list[int]:
         """Reserve `num_pages` pages and return their indices.
@@ -110,6 +118,11 @@ class KVMemoryPool:
         return len(self._free)
 
     @property
+    def scratch_page_idx(self) -> int | None:
+        """Reserved page index for CUDA-graph padded rows, if any."""
+        return self._scratch_page_idx
+
+    @property
     def k_caches(self) -> list[torch.Tensor]:
         """Per-layer K cache tensors.
 
@@ -147,6 +160,7 @@ class KVMemoryPool:
         dtype: torch.dtype,
         device: str,
         bytes_budget: int,
+        reserve_scratch_page: bool = False,
     ) -> KVMemoryPool:
         """Convenience: derive `num_pages` from a memory budget."""
         if bytes_budget <= 0:
@@ -178,6 +192,7 @@ class KVMemoryPool:
             head_dim=head_dim,
             dtype=dtype,
             device=device,
+            reserve_scratch_page=reserve_scratch_page,
         )
 
 

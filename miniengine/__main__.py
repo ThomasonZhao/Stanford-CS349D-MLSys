@@ -68,6 +68,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable torch.compile on the paged decode MLP sub-region",
     )
+    p.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        help="Enable manual CUDA-graph capture for paged decode (extra credit)",
+    )
+    p.add_argument(
+        "--cuda-graph-batch-sizes",
+        type=str,
+        default="1,2,4,8,16,32",
+        help="Comma-separated bucket batch sizes to capture",
+    )
     return p.parse_args()
 
 
@@ -91,6 +102,11 @@ def main() -> None:
         args.torch_compile,
     )
 
+    cuda_graph_batch_sizes = [
+        int(b.strip())
+        for b in args.cuda_graph_batch_sizes.split(",")
+        if b.strip()
+    ]
     engine = Engine(
         model_path=args.model,
         dtype=dtype,
@@ -100,6 +116,8 @@ def main() -> None:
         mem_fraction_static=args.mem_fraction_static,
         torch_compile=args.torch_compile,
         max_running=args.max_running,
+        cuda_graph=args.cuda_graph,
+        cuda_graph_batch_sizes=cuda_graph_batch_sizes,
     )
     sched = Scheduler(engine=engine, max_running=args.max_running, mode=args.mode)
 

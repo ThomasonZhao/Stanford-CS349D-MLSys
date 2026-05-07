@@ -48,6 +48,8 @@ class Engine:
         torch_compile: bool = False,
         max_running: int = 16,
         max_decode_pages_per_seq: int = 64,
+        cuda_graph: bool = False,
+        cuda_graph_batch_sizes: list[int] | None = None,
     ):
         self.device = device
         self.dtype = dtype
@@ -57,7 +59,10 @@ class Engine:
         self.torch_compile = torch_compile
         self.max_running = max_running
         self.max_decode_pages_per_seq = max_decode_pages_per_seq
+        self.cuda_graph = cuda_graph and mode == "paged"
+        self.cuda_graph_batch_sizes = cuda_graph_batch_sizes or []
         self.kv_pool: KVMemoryPool | None = None
+        self.cuda_graph_runner = None
         self._dec_buffer_capacity = 0
         self._dec_buffer_pages_per_seq = 0
         self._dec_input_ids: torch.Tensor | None = None
@@ -112,17 +117,37 @@ class Engine:
                 dtype=dtype,
                 device=device,
                 bytes_budget=bytes_budget,
+                reserve_scratch_page=self.cuda_graph,
             )
             logger.info(
-                "Paged KV pool ready  pages=%d  page_size=%d  free=%d",
+                "Paged KV pool ready  pages=%d  page_size=%d  free=%d  scratch=%s",
                 self.kv_pool.num_pages,
                 self.kv_pool.page_size,
                 self.kv_pool.num_free,
+                self.kv_pool.scratch_page_idx,
+            )
+            graph_capacity = (
+                max(max_running, max(self.cuda_graph_batch_sizes))
+                if self.cuda_graph
+                else max_running
             )
             self._allocate_decode_buffers(
-                capacity=max_running,
+                capacity=graph_capacity,
                 pages_per_seq=max_decode_pages_per_seq,
             )
+            if self.cuda_graph:
+                from miniengine.cuda_graph import CudaGraphRunner
+
+                self.cuda_graph_runner = CudaGraphRunner(
+                    engine=self,
+                    bucket_sizes=self.cuda_graph_batch_sizes,
+                    max_pages_per_seq=max_decode_pages_per_seq,
+                )
+                self.cuda_graph_runner.capture()
+                logger.info(
+                    "CUDA graph runner ready  buckets=%s",
+                    self.cuda_graph_runner.bucket_sizes,
+                )
 
         # ── Stop tokens ─────────────────────────────────────────────────
         self.stop_token_ids: set[int] = set()
@@ -514,19 +539,25 @@ class Engine:
                 input_ids,
                 position_ids,
             ) = self._prepare_paged_decode_inputs(requests)
-            paged_ctx = self._make_paged_context(
-                is_prefill=False,
-                block_table=block_table,
-                cache_seqlens=cache_seqlens,
-                slot_mapping=None,
-            )
 
-            logits, _ = self.model(
-                input_ids,
-                position_ids,
-                kv_caches=None,
-                paged_ctx=paged_ctx,
-            )
+            if (
+                self.cuda_graph_runner is not None
+                and len(requests) <= self.cuda_graph_runner.max_bucket
+            ):
+                logits = self.cuda_graph_runner.replay(len(requests))
+            else:
+                paged_ctx = self._make_paged_context(
+                    is_prefill=False,
+                    block_table=block_table,
+                    cache_seqlens=cache_seqlens,
+                    slot_mapping=None,
+                )
+                logits, _ = self.model(
+                    input_ids,
+                    position_ids,
+                    kv_caches=None,
+                    paged_ctx=paged_ctx,
+                )
 
             token_ids = sample_tokens_batched(
                 logits[:, -1, :],
