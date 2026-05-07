@@ -46,6 +46,8 @@ class Engine:
         page_size: int = 32,
         mem_fraction_static: float = 0.85,
         torch_compile: bool = False,
+        max_running: int = 16,
+        max_decode_pages_per_seq: int = 64,
     ):
         self.device = device
         self.dtype = dtype
@@ -53,7 +55,21 @@ class Engine:
         self.page_size = page_size
         self.mem_fraction_static = mem_fraction_static
         self.torch_compile = torch_compile
+        self.max_running = max_running
+        self.max_decode_pages_per_seq = max_decode_pages_per_seq
         self.kv_pool: KVMemoryPool | None = None
+        self._dec_buffer_capacity = 0
+        self._dec_buffer_pages_per_seq = 0
+        self._dec_input_ids: torch.Tensor | None = None
+        self._dec_position_ids: torch.Tensor | None = None
+        self._dec_cache_seqlens: torch.Tensor | None = None
+        self._dec_slot_mapping: torch.Tensor | None = None
+        self._dec_block_table: torch.Tensor | None = None
+        self._dec_input_ids_cpu: torch.Tensor | None = None
+        self._dec_position_ids_cpu: torch.Tensor | None = None
+        self._dec_cache_seqlens_cpu: torch.Tensor | None = None
+        self._dec_slot_mapping_cpu: torch.Tensor | None = None
+        self._dec_block_table_cpu: torch.Tensor | None = None
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
         logger.info("Loading tokenizer from %s …", model_path)
@@ -104,6 +120,10 @@ class Engine:
                 self.kv_pool.num_pages,
                 self.kv_pool.page_size,
                 self.kv_pool.num_free,
+            )
+            self._allocate_decode_buffers(
+                capacity=max_running,
+                pages_per_seq=max_decode_pages_per_seq,
             )
 
         # ── Stop tokens ─────────────────────────────────────────────────
@@ -200,6 +220,118 @@ class Engine:
             max_seqlen_k=max_seqlen,
             slot_mapping=slot_mapping,
         )
+
+    def _cpu_staging_empty(
+        self, shape: tuple[int, ...], dtype: torch.dtype
+    ) -> torch.Tensor:
+        device = torch.device(self.device)
+        pin_memory = device.type == "cuda" and torch.cuda.is_available()
+        return torch.empty(shape, dtype=dtype, device="cpu", pin_memory=pin_memory)
+
+    def _allocate_decode_buffers(self, capacity: int, pages_per_seq: int) -> None:
+        capacity = max(1, capacity)
+        pages_per_seq = max(1, pages_per_seq)
+        device = torch.device(self.device)
+
+        self._dec_buffer_capacity = capacity
+        self._dec_buffer_pages_per_seq = pages_per_seq
+        self._dec_input_ids = torch.empty(
+            (capacity, 1), dtype=torch.long, device=device
+        )
+        self._dec_position_ids = torch.empty(
+            (capacity, 1), dtype=torch.long, device=device
+        )
+        self._dec_cache_seqlens = torch.empty(
+            (capacity,), dtype=torch.int32, device=device
+        )
+        self._dec_slot_mapping = torch.empty(
+            (capacity,), dtype=torch.long, device=device
+        )
+        self._dec_block_table = torch.empty(
+            (capacity, pages_per_seq), dtype=torch.int32, device=device
+        )
+
+        self._dec_input_ids_cpu = self._cpu_staging_empty((capacity, 1), torch.long)
+        self._dec_position_ids_cpu = self._cpu_staging_empty(
+            (capacity, 1), torch.long
+        )
+        self._dec_cache_seqlens_cpu = self._cpu_staging_empty(
+            (capacity,), torch.int32
+        )
+        self._dec_slot_mapping_cpu = self._cpu_staging_empty((capacity,), torch.long)
+        self._dec_block_table_cpu = self._cpu_staging_empty(
+            (capacity, pages_per_seq), torch.int32
+        )
+
+    def _ensure_decode_buffers(self, batch_size: int, pages_per_seq: int) -> None:
+        if (
+            self._dec_input_ids is not None
+            and batch_size <= self._dec_buffer_capacity
+            and pages_per_seq <= self._dec_buffer_pages_per_seq
+        ):
+            return
+
+        capacity = max(batch_size, self._dec_buffer_capacity, self.max_running)
+        page_capacity = max(
+            pages_per_seq,
+            self._dec_buffer_pages_per_seq,
+            self.max_decode_pages_per_seq,
+        )
+        self._allocate_decode_buffers(capacity=capacity, pages_per_seq=page_capacity)
+
+    def _prepare_paged_decode_inputs(
+        self, requests: list[Request], pool: KVMemoryPool
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size = len(requests)
+        max_pages = max(len(req.page_table) for req in requests)
+        self._ensure_decode_buffers(batch_size=batch_size, pages_per_seq=max_pages)
+
+        if (
+            self._dec_input_ids is None
+            or self._dec_position_ids is None
+            or self._dec_cache_seqlens is None
+            or self._dec_slot_mapping is None
+            or self._dec_block_table is None
+            or self._dec_input_ids_cpu is None
+            or self._dec_position_ids_cpu is None
+            or self._dec_cache_seqlens_cpu is None
+            or self._dec_slot_mapping_cpu is None
+            or self._dec_block_table_cpu is None
+        ):
+            raise RuntimeError("paged decode buffers are not initialized")
+
+        input_ids_cpu = self._dec_input_ids_cpu[:batch_size]
+        position_ids_cpu = self._dec_position_ids_cpu[:batch_size]
+        cache_seqlens_cpu = self._dec_cache_seqlens_cpu[:batch_size]
+        slot_mapping_cpu = self._dec_slot_mapping_cpu[:batch_size]
+        block_table_cpu = self._dec_block_table_cpu[:batch_size, :max_pages]
+        block_table_cpu.zero_()
+
+        for i, req in enumerate(requests):
+            cache_len = req.cache_len
+            input_ids_cpu[i, 0] = req.output_ids[-1]
+            position_ids_cpu[i, 0] = cache_len
+            cache_seqlens_cpu[i] = cache_len
+
+            page_tensor = torch.as_tensor(req.page_table, dtype=torch.int32)
+            block_table_cpu[i, : len(req.page_table)].copy_(page_tensor)
+
+            page_idx = req.page_table[cache_len // pool.page_size]
+            slot_mapping_cpu[i] = page_idx * pool.page_size + cache_len % pool.page_size
+
+        input_ids = self._dec_input_ids[:batch_size]
+        position_ids = self._dec_position_ids[:batch_size]
+        cache_seqlens = self._dec_cache_seqlens[:batch_size]
+        slot_mapping = self._dec_slot_mapping[:batch_size]
+        block_table = self._dec_block_table[:batch_size, :max_pages]
+
+        input_ids.copy_(input_ids_cpu, non_blocking=True)
+        position_ids.copy_(position_ids_cpu, non_blocking=True)
+        cache_seqlens.copy_(cache_seqlens_cpu, non_blocking=True)
+        slot_mapping.copy_(slot_mapping_cpu, non_blocking=True)
+        block_table.copy_(block_table_cpu, non_blocking=True)
+
+        return block_table, cache_seqlens, slot_mapping, input_ids, position_ids
 
     # ── Forward passes ──────────────────────────────────────────────────
 
@@ -372,39 +504,13 @@ class Engine:
                 req.page_table.append(page)
                 grown_pages.append((req, page))
 
-            max_pages = max(len(req.page_table) for req in requests)
-            block_table_rows = [
-                req.page_table + [0] * (max_pages - len(req.page_table))
-                for req in requests
-            ]
-            block_table = torch.tensor(
-                block_table_rows, dtype=torch.int32, device=self.device
-            )
-            cache_seqlens = torch.tensor(
-                [req.cache_len for req in requests],
-                dtype=torch.int32,
-                device=self.device,
-            )
-            slot_mapping = []
-            for req in requests:
-                page_idx = req.page_table[req.cache_len // pool.page_size]
-                slot_mapping.append(
-                    page_idx * pool.page_size + req.cache_len % pool.page_size
-                )
-            slot_mapping_tensor = torch.tensor(
-                slot_mapping, dtype=torch.long, device=self.device
-            )
-
-            input_ids = torch.tensor(
-                [[req.output_ids[-1]] for req in requests],
-                dtype=torch.long,
-                device=self.device,
-            )
-            position_ids = torch.tensor(
-                [[req.cache_len] for req in requests],
-                dtype=torch.long,
-                device=self.device,
-            )
+            (
+                block_table,
+                cache_seqlens,
+                slot_mapping_tensor,
+                input_ids,
+                position_ids,
+            ) = self._prepare_paged_decode_inputs(requests, pool)
             paged_ctx = self._make_paged_context(
                 is_prefill=False,
                 block_table=block_table,

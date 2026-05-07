@@ -99,6 +99,7 @@ def main() -> None:
         page_size=args.page_size,
         mem_fraction_static=args.mem_fraction_static,
         torch_compile=args.torch_compile,
+        max_running=args.max_running,
     )
     sched = Scheduler(engine=engine, max_running=args.max_running, mode=args.mode)
 
