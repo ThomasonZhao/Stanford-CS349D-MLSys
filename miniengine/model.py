@@ -141,8 +141,9 @@ class RotaryEmbedding(nn.Module):
             position_ids: (batch, seq_len) integer positions.
 
         Returns:
-            cos, sin each of shape (batch, 1, seq_len, head_dim) —
-            broadcastable over the head dimension.
+            cos, sin each of shape (batch, seq_len, 1, head_dim).
+            TransformerModel reshapes these once per forward for the
+            active attention layout.
         """
         max_pos = int(position_ids.max().item()) + 1
 
@@ -175,13 +176,10 @@ def apply_rotary_emb(
     """
     Apply RoPE to x.
 
-    x:   (batch, num_heads, seq_len, head_dim)
-    cos: (batch, seq_len, 1, head_dim)  — broadcast over heads
+    x:   attention tensor in the active layout
+    cos: layout-and-dtype-correct table, broadcastable to x
     sin: same shape as cos
     """
-    # Cast cos/sin to x.dtype — fp32 cos/sin would silently promote q/k.
-    cos = cos.transpose(1, 2).to(x.dtype)
-    sin = sin.transpose(1, 2).to(x.dtype)
     return x * cos + _rotate_half(x) * sin
 
 
@@ -253,8 +251,8 @@ class Attention(nn.Module):
 
         k_cache = paged_ctx.k_cache_pool[layer_idx]
         v_cache = paged_ctx.v_cache_pool[layer_idx]
-        k_packed = k[0].transpose(0, 1).contiguous()
-        v_packed = v[0].transpose(0, 1).contiguous()
+        k_packed = k[0].contiguous()
+        v_packed = v[0].contiguous()
         k_cache.view(-1, self.num_kv_heads, self.head_dim)[
             paged_ctx.slot_mapping
         ] = k_packed
@@ -262,7 +260,7 @@ class Attention(nn.Module):
             paged_ctx.slot_mapping
         ] = v_packed
 
-        q_packed = q[0].transpose(0, 1).contiguous()
+        q_packed = q[0].contiguous()
         if _flash_attn_varlen_func is not None and q_packed.is_cuda:
             out_packed = _flash_attn_varlen_func(
                 q_packed,
@@ -277,10 +275,13 @@ class Attention(nn.Module):
             if not _Attention_flash_prefill_logged[0]:
                 _Attention_flash_prefill_logged[0] = True
                 logger.info("paged prefill: flash_attn_varlen_func active")
-            return out_packed.transpose(0, 1).unsqueeze(0)
+            return out_packed.unsqueeze(0)
 
-        k_full, v_full = self._expand_kv_for_gqa(k, v, bsz=1)
-        total_tokens = q.shape[2]
+        q_sdpa = q.transpose(1, 2)
+        k_sdpa = k.transpose(1, 2)
+        v_sdpa = v.transpose(1, 2)
+        k_full, v_full = self._expand_kv_for_gqa(k_sdpa, v_sdpa, bsz=1)
+        total_tokens = q.shape[1]
         seq_lens = (paged_ctx.cu_seqlens_q[1:] - paged_ctx.cu_seqlens_q[:-1]).to(
             device=q.device, dtype=torch.long
         )
@@ -298,12 +299,13 @@ class Attention(nn.Module):
             device=q.device,
         )
         attn_mask.masked_fill_(allowed, 0.0)
-        return F.scaled_dot_product_attention(
-            q,
+        out = F.scaled_dot_product_attention(
+            q_sdpa,
             k_full,
             v_full,
             attn_mask=attn_mask.view(1, 1, total_tokens, total_tokens),
         )
+        return out.transpose(1, 2).contiguous()
 
     def _paged_decode_attention(
         self,
@@ -327,11 +329,11 @@ class Attention(nn.Module):
         ):
             try:
                 out = _flash_attn_with_kvcache(
-                    q.transpose(1, 2).contiguous(),
+                    q,
                     k_cache,
                     v_cache,
-                    k=k.transpose(1, 2).contiguous(),
-                    v=v.transpose(1, 2).contiguous(),
+                    k=k,
+                    v=v,
                     cache_seqlens=paged_ctx.cache_seqlens,
                     block_table=paged_ctx.block_table,
                     causal=True,
@@ -339,7 +341,7 @@ class Attention(nn.Module):
                 if not _Attention_flash_decode_logged[0]:
                     _Attention_flash_decode_logged[0] = True
                     logger.info("paged decode: flash_attn_with_kvcache active")
-                return out.transpose(1, 2).contiguous()
+                return out
             except Exception:
                 _flash_decode_disabled = True
                 if not _Attention_flash_decode_fallback_logged[0]:
@@ -350,7 +352,7 @@ class Attention(nn.Module):
                         exc_info=True,
                     )
 
-        bsz, _, seq_len, _ = q.shape
+        bsz, seq_len, _, _ = q.shape
         if paged_ctx.slot_mapping is not None:
             slot_mapping = paged_ctx.slot_mapping
         else:
@@ -365,8 +367,8 @@ class Attention(nn.Module):
 
         if seq_len != 1:
             raise ValueError("paged decode fallback currently expects one token")
-        k_new = k.transpose(1, 2).contiguous().view(-1, self.num_kv_heads, self.head_dim)
-        v_new = v.transpose(1, 2).contiguous().view(-1, self.num_kv_heads, self.head_dim)
+        k_new = k.reshape(-1, self.num_kv_heads, self.head_dim)
+        v_new = v.reshape(-1, self.num_kv_heads, self.head_dim)
         k_cache.view(-1, self.num_kv_heads, self.head_dim)[slot_mapping] = k_new
         v_cache.view(-1, self.num_kv_heads, self.head_dim)[slot_mapping] = v_new
 
@@ -391,9 +393,10 @@ class Attention(nn.Module):
             bsz, 1, 1, max_kv_len, dtype=q.dtype, device=q.device
         )
         attn_mask.masked_fill_(mask_positions >= valid_lens, float("-inf"))
-        return F.scaled_dot_product_attention(
-            q, gathered_k, gathered_v, attn_mask=attn_mask
+        out = F.scaled_dot_product_attention(
+            q.transpose(1, 2), gathered_k, gathered_v, attn_mask=attn_mask
         )
+        return out.transpose(1, 2).contiguous()
 
     def forward(
         self,
@@ -423,22 +426,31 @@ class Attention(nn.Module):
         """
         bsz, seq_len, _ = hidden.shape
 
-        # Project Q, K, V and reshape to (batch, heads, seq_len, head_dim)
-        q = (
-            self.q_proj(hidden)
-            .view(bsz, seq_len, self.num_heads, self.head_dim)
-            .transpose(1, 2)
-        )
-        k = (
-            self.k_proj(hidden)
-            .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
-            .transpose(1, 2)
-        )
-        v = (
-            self.v_proj(hidden)
-            .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
-            .transpose(1, 2)
-        )
+        if paged_ctx is not None:
+            q = self.q_proj(hidden).view(bsz, seq_len, self.num_heads, self.head_dim)
+            k = self.k_proj(hidden).view(
+                bsz, seq_len, self.num_kv_heads, self.head_dim
+            )
+            v = self.v_proj(hidden).view(
+                bsz, seq_len, self.num_kv_heads, self.head_dim
+            )
+        else:
+            # Non-paged SDPA keeps the original (batch, heads, seq, dim) layout.
+            q = (
+                self.q_proj(hidden)
+                .view(bsz, seq_len, self.num_heads, self.head_dim)
+                .transpose(1, 2)
+            )
+            k = (
+                self.k_proj(hidden)
+                .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+                .transpose(1, 2)
+            )
+            v = (
+                self.v_proj(hidden)
+                .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+                .transpose(1, 2)
+            )
 
         # QK-Norm
         q = self.q_norm(q)
@@ -455,7 +467,7 @@ class Attention(nn.Module):
                 out = self._paged_prefill_attention(q, k, v, paged_ctx, layer_idx)
             else:
                 out = self._paged_decode_attention(q, k, v, paged_ctx, layer_idx)
-            out = out.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
+            out = out.reshape(bsz, seq_len, self.num_heads * self.head_dim)
             return self.o_proj(out), (k, v)
 
         # Append to KV cache
@@ -598,6 +610,12 @@ class TransformerModel(nn.Module):
         """
         hidden = self.embed_tokens(input_ids)
         cos, sin = self.rotary_emb(position_ids)
+        if paged_ctx is not None:
+            cos = cos.to(dtype=hidden.dtype)
+            sin = sin.to(dtype=hidden.dtype)
+        else:
+            cos = cos.transpose(1, 2).to(dtype=hidden.dtype)
+            sin = sin.transpose(1, 2).to(dtype=hidden.dtype)
         use_compiled_mlp = (
             self.use_torch_compile
             and paged_ctx is not None

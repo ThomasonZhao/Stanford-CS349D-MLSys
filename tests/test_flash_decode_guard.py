@@ -34,9 +34,9 @@ class FlashDecodeGuardTest(unittest.TestCase):
             is_prefill=False,
             slot_mapping=torch.tensor([0, 2], dtype=torch.long),
         )
-        q = torch.randn(2, config.num_attention_heads, 1, config.head_dim)
-        k = torch.randn(2, config.num_key_value_heads, 1, config.head_dim)
-        v = torch.randn(2, config.num_key_value_heads, 1, config.head_dim)
+        q = torch.randn(2, 1, config.num_attention_heads, config.head_dim)
+        k = torch.randn(2, 1, config.num_key_value_heads, config.head_dim)
+        v = torch.randn(2, 1, config.num_key_value_heads, config.head_dim)
 
         original_flash = model_module._flash_attn_with_kvcache
         original_disabled = model_module._flash_decode_disabled
