@@ -119,20 +119,38 @@ class RotaryEmbedding(nn.Module):
     """
     Rotary Position Embedding (RoPE).
 
-    Precomputes and caches cos/sin tables, indexed by position_ids at
-    forward time.  The cache grows on-demand so we never allocate for the
-    full 256K context upfront.
+    Precomputes a bounded cos/sin cache, indexed by position_ids at
+    forward time. The cap avoids allocating the full 256K model context
+    while keeping forward free of CUDA->CPU max-position syncs.
     """
 
-    def __init__(self, head_dim: int, theta: float = 10000.0):
+    def __init__(
+        self,
+        head_dim: int,
+        theta: float = 10000.0,
+        max_positions: int = 16_384,
+    ):
         super().__init__()
+        if max_positions <= 0:
+            raise ValueError("max_positions must be positive")
         self.head_dim = head_dim
         self.theta = theta
+        self.max_positions = max_positions
         inv_freq = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self._cos: torch.Tensor | None = None
-        self._sin: torch.Tensor | None = None
-        self._cached_len: int = 0
+        self.register_buffer("_cos", torch.empty(0), persistent=False)
+        self.register_buffer("_sin", torch.empty(0), persistent=False)
+        self._build_cache()
+
+    @torch.no_grad()
+    def _build_cache(self) -> None:
+        t = torch.arange(
+            self.max_positions, device=self.inv_freq.device, dtype=self.inv_freq.dtype
+        )
+        freqs = torch.outer(t, self.inv_freq)
+        emb = torch.cat([freqs, freqs], dim=-1)
+        self._cos = emb.cos()
+        self._sin = emb.sin()
 
     @torch.no_grad()
     def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -145,19 +163,6 @@ class RotaryEmbedding(nn.Module):
             TransformerModel reshapes these once per forward for the
             active attention layout.
         """
-        max_pos = int(position_ids.max().item()) + 1
-
-        if self._cos is None or max_pos > self._cached_len:
-            length = max(max_pos, self._cached_len * 2, 256)
-            t = torch.arange(
-                length, device=self.inv_freq.device, dtype=self.inv_freq.dtype
-            )
-            freqs = torch.outer(t, self.inv_freq)  # (length, head_dim/2)
-            emb = torch.cat([freqs, freqs], dim=-1)  # (length, head_dim)
-            self._cos = emb.cos()
-            self._sin = emb.sin()
-            self._cached_len = length
-
         # Index into cache: (batch, seq_len, head_dim) → add head dim
         cos = self._cos[position_ids].unsqueeze(2)  # (batch, seq_len, 1, head_dim)
         sin = self._sin[position_ids].unsqueeze(2)
@@ -580,7 +585,12 @@ class TransformerModel(nn.Module):
             [TransformerBlock(config) for _ in range(config.num_hidden_layers)]
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = RotaryEmbedding(config.head_dim, theta=config.rope_theta)
+        rope_cap = min(config.max_position_embeddings, 16_384)
+        self.rotary_emb = RotaryEmbedding(
+            config.head_dim,
+            theta=config.rope_theta,
+            max_positions=rope_cap,
+        )
         self.use_torch_compile = False
 
     def enable_torch_compile(self) -> None:
@@ -757,6 +767,7 @@ def load_weights(
                     / module.head_dim
                 )
             )
+            module._build_cache()
     logger.info(
         "Weights loaded — %d parameters on %s (%s)",
         sum(p.numel() for p in model.parameters()),

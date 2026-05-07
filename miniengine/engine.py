@@ -221,6 +221,19 @@ class Engine:
             slot_mapping=slot_mapping,
         )
 
+    def _validate_rope_budget(self, request: Request) -> None:
+        rotary = self.model.model.rotary_emb
+        requested_tokens = (
+            request.num_input_tokens + request.sampling_params.max_new_tokens
+        )
+        if requested_tokens > rotary.max_positions:
+            raise ValueError(
+                "request length exceeds RoPE cache cap "
+                f"(prompt={request.num_input_tokens}, "
+                f"max_new_tokens={request.sampling_params.max_new_tokens}, "
+                f"cap={rotary.max_positions})"
+            )
+
     def _cpu_staging_empty(
         self, shape: tuple[int, ...], dtype: torch.dtype
     ) -> torch.Tensor:
@@ -347,6 +360,7 @@ class Engine:
         Returns:
             The first generated token id.
         """
+        self._validate_rope_budget(request)
         input_ids = torch.tensor(
             [request.input_ids], dtype=torch.long, device=self.device
         )
@@ -404,6 +418,8 @@ class Engine:
         prompt_lens = [req.num_input_tokens for req in requests]
         if any(length <= 0 for length in prompt_lens):
             raise ValueError("paged prefill requires non-empty prompts")
+        for req in requests:
+            self._validate_rope_budget(req)
 
         page_counts = [pool.pages_needed(length) for length in prompt_lens]
         total_pages = sum(page_counts)
