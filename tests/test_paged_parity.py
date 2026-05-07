@@ -95,8 +95,14 @@ def _paged_generate_batch(
         slot_mapping=torch.tensor(slot_mapping, dtype=torch.long),
     )
 
-    logits, _ = model(input_ids, position_ids, paged_ctx=paged_ctx)
-    output_ids = [[_greedy(logits[:, end_idx - 1, :])] for end_idx in cu_values[1:]]
+    logit_positions = cu_seqlens[1:].to(dtype=torch.long) - 1
+    logits, _ = model(
+        input_ids,
+        position_ids,
+        paged_ctx=paged_ctx,
+        logit_positions=logit_positions,
+    )
+    output_ids = [[_greedy(logits[:, idx, :])] for idx in range(len(prompts))]
 
     for _ in range(num_tokens - 1):
         for idx, cache_len in enumerate(cache_lens):

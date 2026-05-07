@@ -675,15 +675,19 @@ class CausalLM(nn.Module):
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         attention_mask: torch.Tensor | None = None,
         paged_ctx: PagedContext | None = None,
+        logit_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Returns:
-            logits:        (batch, seq_len, vocab_size)
+            logits:        (batch, selected_or_full_seq_len, vocab_size)
             new_kv_caches: per-layer KV caches
         """
         hidden, new_kv_caches = self.model(
             input_ids, position_ids, kv_caches, attention_mask, paged_ctx
         )
+        if logit_positions is not None:
+            positions = logit_positions.to(device=hidden.device, dtype=torch.long)
+            hidden = hidden.index_select(1, positions)
         if self.config.tie_word_embeddings:
             logits = F.linear(hidden, self.model.embed_tokens.weight)
         else:

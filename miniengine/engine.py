@@ -447,6 +447,7 @@ class Engine:
             slot_mapping_tensor = torch.tensor(
                 slot_mapping, dtype=torch.long, device=self.device
             )
+            logit_positions = cu_seqlens[1:].to(dtype=torch.long) - 1
             paged_ctx = self._make_paged_context(
                 is_prefill=True,
                 block_table=None,
@@ -461,14 +462,15 @@ class Engine:
                 position_ids,
                 kv_caches=None,
                 paged_ctx=paged_ctx,
+                logit_positions=logit_positions,
             )
 
             token_ids: list[int] = []
-            for req, end_idx in zip(requests, cu_values[1:]):
+            for i, req in enumerate(requests):
                 req.cache_len = req.num_input_tokens
                 token_ids.append(
                     sample_token(
-                        logits[:, end_idx - 1, :],
+                        logits[:, i, :],
                         req.sampling_params,
                         req.output_ids,
                     )
