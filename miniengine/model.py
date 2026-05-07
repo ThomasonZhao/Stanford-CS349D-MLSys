@@ -504,14 +504,19 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.self_attn = Attention(config)
         self.mlp = MLP(config)
-        self._compiled_decode_mlp: nn.Module | None = None
+        self._compiled_decode_ffn = None
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
+    def _decode_ffn(self, residual: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        # Fused post-norm + MLP + residual; safe to compile (no attention,
+        # no Python branching, stable shapes during decode).
+        return residual + self.mlp(self.post_attention_layernorm(hidden))
+
     def enable_torch_compile(self) -> None:
-        self._compiled_decode_mlp = torch.compile(self.mlp, dynamic=True)
+        self._compiled_decode_ffn = torch.compile(self._decode_ffn, dynamic=True)
 
     def forward(
         self,
@@ -531,13 +536,13 @@ class TransformerBlock(nn.Module):
         )
         hidden = residual + hidden
 
-        residual = hidden
-        hidden = self.post_attention_layernorm(hidden)
-        if use_compiled_mlp and self._compiled_decode_mlp is not None:
-            hidden = self._compiled_decode_mlp(hidden)
+        if use_compiled_mlp and self._compiled_decode_ffn is not None:
+            hidden = self._compiled_decode_ffn(hidden, hidden)
         else:
+            residual = hidden
+            hidden = self.post_attention_layernorm(hidden)
             hidden = self.mlp(hidden)
-        hidden = residual + hidden
+            hidden = residual + hidden
 
         return hidden, new_kv
 
