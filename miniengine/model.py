@@ -33,6 +33,11 @@ except Exception:  # pragma: no cover - optional CUDA-only dependency
     _flash_attn_varlen_func = None
     _flash_attn_with_kvcache = None
 
+_Attention_flash_decode_logged = [False]
+_Attention_flash_decode_fallback_logged = [False]
+_Attention_flash_prefill_logged = [False]
+_Attention_flash_prefill_fallback_logged = [False]
+
 
 # ── Config ──────────────────────────────────────────────────────────────
 
@@ -268,6 +273,9 @@ class Attention(nn.Module):
                 paged_ctx.max_seqlen_k,
                 causal=True,
             )
+            if not _Attention_flash_prefill_logged[0]:
+                _Attention_flash_prefill_logged[0] = True
+                logger.info("paged prefill: flash_attn_varlen_func active")
             return out_packed.transpose(0, 1).unsqueeze(0)
 
         k_full, v_full = self._expand_kv_for_gqa(k, v, bsz=1)
@@ -322,11 +330,17 @@ class Attention(nn.Module):
                     block_table=paged_ctx.block_table,
                     causal=True,
                 )
+                if not _Attention_flash_decode_logged[0]:
+                    _Attention_flash_decode_logged[0] = True
+                    logger.info("paged decode: flash_attn_with_kvcache active")
                 return out.transpose(1, 2).contiguous()
             except Exception:
-                logger.debug(
-                    "flash-attn paged decode failed; using fallback", exc_info=True
-                )
+                if not _Attention_flash_decode_fallback_logged[0]:
+                    _Attention_flash_decode_fallback_logged[0] = True
+                    logger.warning(
+                        "flash-attn paged decode failed; using SDPA fallback",
+                        exc_info=True,
+                    )
 
         bsz, _, seq_len, _ = q.shape
         if paged_ctx.slot_mapping is not None:
