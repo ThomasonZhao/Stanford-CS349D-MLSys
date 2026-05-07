@@ -32,7 +32,7 @@ class FlashDecodeGuardTest(unittest.TestCase):
             block_table=torch.tensor([[0], [1]], dtype=torch.int32),
             cache_seqlens=torch.tensor([0, 0], dtype=torch.int32),
             is_prefill=False,
-            slot_mapping=torch.tensor([0, 2], dtype=torch.long),
+            slot_mapping=None,
         )
         q = torch.randn(2, 1, config.num_attention_heads, config.head_dim)
         k = torch.randn(2, 1, config.num_key_value_heads, config.head_dim)

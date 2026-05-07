@@ -63,12 +63,10 @@ class Engine:
         self._dec_input_ids: torch.Tensor | None = None
         self._dec_position_ids: torch.Tensor | None = None
         self._dec_cache_seqlens: torch.Tensor | None = None
-        self._dec_slot_mapping: torch.Tensor | None = None
         self._dec_block_table: torch.Tensor | None = None
         self._dec_input_ids_cpu: torch.Tensor | None = None
         self._dec_position_ids_cpu: torch.Tensor | None = None
         self._dec_cache_seqlens_cpu: torch.Tensor | None = None
-        self._dec_slot_mapping_cpu: torch.Tensor | None = None
         self._dec_block_table_cpu: torch.Tensor | None = None
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
@@ -257,9 +255,6 @@ class Engine:
         self._dec_cache_seqlens = torch.empty(
             (capacity,), dtype=torch.int32, device=device
         )
-        self._dec_slot_mapping = torch.empty(
-            (capacity,), dtype=torch.long, device=device
-        )
         self._dec_block_table = torch.empty(
             (capacity, pages_per_seq), dtype=torch.int32, device=device
         )
@@ -271,7 +266,6 @@ class Engine:
         self._dec_cache_seqlens_cpu = self._cpu_staging_empty(
             (capacity,), torch.int32
         )
-        self._dec_slot_mapping_cpu = self._cpu_staging_empty((capacity,), torch.long)
         self._dec_block_table_cpu = self._cpu_staging_empty(
             (capacity, pages_per_seq), torch.int32
         )
@@ -293,8 +287,8 @@ class Engine:
         self._allocate_decode_buffers(capacity=capacity, pages_per_seq=page_capacity)
 
     def _prepare_paged_decode_inputs(
-        self, requests: list[Request], pool: KVMemoryPool
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        self, requests: list[Request]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size = len(requests)
         max_pages = max(len(req.page_table) for req in requests)
         self._ensure_decode_buffers(batch_size=batch_size, pages_per_seq=max_pages)
@@ -303,12 +297,10 @@ class Engine:
             self._dec_input_ids is None
             or self._dec_position_ids is None
             or self._dec_cache_seqlens is None
-            or self._dec_slot_mapping is None
             or self._dec_block_table is None
             or self._dec_input_ids_cpu is None
             or self._dec_position_ids_cpu is None
             or self._dec_cache_seqlens_cpu is None
-            or self._dec_slot_mapping_cpu is None
             or self._dec_block_table_cpu is None
         ):
             raise RuntimeError("paged decode buffers are not initialized")
@@ -316,7 +308,6 @@ class Engine:
         input_ids_cpu = self._dec_input_ids_cpu[:batch_size]
         position_ids_cpu = self._dec_position_ids_cpu[:batch_size]
         cache_seqlens_cpu = self._dec_cache_seqlens_cpu[:batch_size]
-        slot_mapping_cpu = self._dec_slot_mapping_cpu[:batch_size]
         block_table_cpu = self._dec_block_table_cpu[:batch_size, :max_pages]
         block_table_cpu.zero_()
 
@@ -329,22 +320,17 @@ class Engine:
             page_tensor = torch.as_tensor(req.page_table, dtype=torch.int32)
             block_table_cpu[i, : len(req.page_table)].copy_(page_tensor)
 
-            page_idx = req.page_table[cache_len // pool.page_size]
-            slot_mapping_cpu[i] = page_idx * pool.page_size + cache_len % pool.page_size
-
         input_ids = self._dec_input_ids[:batch_size]
         position_ids = self._dec_position_ids[:batch_size]
         cache_seqlens = self._dec_cache_seqlens[:batch_size]
-        slot_mapping = self._dec_slot_mapping[:batch_size]
         block_table = self._dec_block_table[:batch_size, :max_pages]
 
         input_ids.copy_(input_ids_cpu, non_blocking=True)
         position_ids.copy_(position_ids_cpu, non_blocking=True)
         cache_seqlens.copy_(cache_seqlens_cpu, non_blocking=True)
-        slot_mapping.copy_(slot_mapping_cpu, non_blocking=True)
         block_table.copy_(block_table_cpu, non_blocking=True)
 
-        return block_table, cache_seqlens, slot_mapping, input_ids, position_ids
+        return block_table, cache_seqlens, input_ids, position_ids
 
     # ── Forward passes ──────────────────────────────────────────────────
 
@@ -523,15 +509,14 @@ class Engine:
             (
                 block_table,
                 cache_seqlens,
-                slot_mapping_tensor,
                 input_ids,
                 position_ids,
-            ) = self._prepare_paged_decode_inputs(requests, pool)
+            ) = self._prepare_paged_decode_inputs(requests)
             paged_ctx = self._make_paged_context(
                 is_prefill=False,
                 block_table=block_table,
                 cache_seqlens=cache_seqlens,
-                slot_mapping=slot_mapping_tensor,
+                slot_mapping=None,
             )
 
             logits, _ = self.model(

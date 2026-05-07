@@ -112,10 +112,6 @@ def _paged_generate_batch(
             dtype=torch.int32,
         )
         cache_seqlens = torch.tensor(cache_lens, dtype=torch.int32)
-        decode_slots = [
-            page_table[cache_len // page_size] * page_size + cache_len % page_size
-            for page_table, cache_len in zip(page_tables, cache_lens)
-        ]
         input_ids = torch.tensor(
             [[tokens[-1]] for tokens in output_ids], dtype=torch.long
         )
@@ -126,7 +122,7 @@ def _paged_generate_batch(
             block_table=block_table,
             cache_seqlens=cache_seqlens,
             is_prefill=False,
-            slot_mapping=torch.tensor(decode_slots, dtype=torch.long),
+            slot_mapping=None,
         )
 
         logits, _ = model(input_ids, position_ids, paged_ctx=paged_ctx)
