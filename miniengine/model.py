@@ -245,8 +245,13 @@ class Attention(nn.Module):
         return q, k, v
 
     def enable_torch_compile(self) -> None:
+        # Disable inductor's internal cudagraph backing so the compiled
+        # callable can be captured inside our outer manual CUDA graph
+        # without colliding on tensor-pool reuse.
         self._compiled_paged_pre_attn = torch.compile(
-            self._paged_pre_attn, dynamic=True
+            self._paged_pre_attn,
+            dynamic=True,
+            options={"triton.cudagraphs": False},
         )
 
     def _expand_kv_for_gqa(
@@ -563,7 +568,11 @@ class TransformerBlock(nn.Module):
         return residual + self.mlp(self.post_attention_layernorm(hidden))
 
     def enable_torch_compile(self) -> None:
-        self._compiled_decode_ffn = torch.compile(self._decode_ffn, dynamic=True)
+        self._compiled_decode_ffn = torch.compile(
+            self._decode_ffn,
+            dynamic=True,
+            options={"triton.cudagraphs": False},
+        )
         self.self_attn.enable_torch_compile()
 
     def forward(
