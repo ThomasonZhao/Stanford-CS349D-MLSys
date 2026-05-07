@@ -226,6 +226,29 @@ class Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
+        self._compiled_paged_pre_attn = None
+
+    def _paged_pre_attn(
+        self, hidden: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Pre-attention dense compute for the paged path: QKV projection,
+        # head reshape, QK-norm, RoPE. Pure pointwise + linear ops with
+        # stable shapes during decode — a good torch.compile target.
+        bsz, seq_len, _ = hidden.shape
+        q = self.q_proj(hidden).view(bsz, seq_len, self.num_heads, self.head_dim)
+        k = self.k_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+        v = self.v_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+        q = apply_rotary_emb(q, cos, sin)
+        k = apply_rotary_emb(k, cos, sin)
+        return q, k, v
+
+    def enable_torch_compile(self) -> None:
+        self._compiled_paged_pre_attn = torch.compile(
+            self._paged_pre_attn, dynamic=True
+        )
+
     def _expand_kv_for_gqa(
         self, k: torch.Tensor, v: torch.Tensor, bsz: int
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -412,6 +435,7 @@ class Attention(nn.Module):
         attention_mask: torch.Tensor | None = None,
         paged_ctx: PagedContext | None = None,
         layer_idx: int | None = None,
+        use_compiled_decode: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
@@ -424,6 +448,8 @@ class Attention(nn.Module):
                             -inf = ignore.
             paged_ctx:     optional paged KV cache context.
             layer_idx:     transformer layer index when using paged_ctx.
+            use_compiled_decode: route paged decode pre-attention through
+                            the torch.compile-fused path when available.
 
         Returns:
             output:       (batch, seq_len, hidden_size)
@@ -432,13 +458,13 @@ class Attention(nn.Module):
         bsz, seq_len, _ = hidden.shape
 
         if paged_ctx is not None:
-            q = self.q_proj(hidden).view(bsz, seq_len, self.num_heads, self.head_dim)
-            k = self.k_proj(hidden).view(
-                bsz, seq_len, self.num_kv_heads, self.head_dim
-            )
-            v = self.v_proj(hidden).view(
-                bsz, seq_len, self.num_kv_heads, self.head_dim
-            )
+            if (
+                use_compiled_decode
+                and self._compiled_paged_pre_attn is not None
+            ):
+                q, k, v = self._compiled_paged_pre_attn(hidden, cos, sin)
+            else:
+                q, k, v = self._paged_pre_attn(hidden, cos, sin)
         else:
             # Non-paged SDPA keeps the original (batch, heads, seq, dim) layout.
             q = (
@@ -456,14 +482,10 @@ class Attention(nn.Module):
                 .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
                 .transpose(1, 2)
             )
-
-        # QK-Norm
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-
-        # RoPE
-        q = apply_rotary_emb(q, cos, sin)
-        k = apply_rotary_emb(k, cos, sin)
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+            q = apply_rotary_emb(q, cos, sin)
+            k = apply_rotary_emb(k, cos, sin)
 
         if paged_ctx is not None:
             if layer_idx is None:
@@ -542,6 +564,7 @@ class TransformerBlock(nn.Module):
 
     def enable_torch_compile(self) -> None:
         self._compiled_decode_ffn = torch.compile(self._decode_ffn, dynamic=True)
+        self.self_attn.enable_torch_compile()
 
     def forward(
         self,
@@ -552,16 +575,23 @@ class TransformerBlock(nn.Module):
         attention_mask: torch.Tensor | None = None,
         paged_ctx: PagedContext | None = None,
         layer_idx: int | None = None,
-        use_compiled_mlp: bool = False,
+        use_compiled_decode: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         residual = hidden
         hidden = self.input_layernorm(hidden)
         hidden, new_kv = self.self_attn(
-            hidden, cos, sin, kv_cache, attention_mask, paged_ctx, layer_idx
+            hidden,
+            cos,
+            sin,
+            kv_cache,
+            attention_mask,
+            paged_ctx,
+            layer_idx,
+            use_compiled_decode=use_compiled_decode,
         )
         hidden = residual + hidden
 
-        if use_compiled_mlp and self._compiled_decode_ffn is not None:
+        if use_compiled_decode and self._compiled_decode_ffn is not None:
             hidden = self._compiled_decode_ffn(hidden, hidden)
         else:
             residual = hidden
@@ -626,7 +656,7 @@ class TransformerModel(nn.Module):
         else:
             cos = cos.transpose(1, 2).to(dtype=hidden.dtype)
             sin = sin.transpose(1, 2).to(dtype=hidden.dtype)
-        use_compiled_mlp = (
+        use_compiled_decode = (
             self.use_torch_compile
             and paged_ctx is not None
             and not paged_ctx.is_prefill
@@ -643,7 +673,7 @@ class TransformerModel(nn.Module):
                 attention_mask,
                 paged_ctx=paged_ctx,
                 layer_idx=i,
-                use_compiled_mlp=use_compiled_mlp,
+                use_compiled_decode=use_compiled_decode,
             )
             new_kv_caches.append(new_kv)
 
