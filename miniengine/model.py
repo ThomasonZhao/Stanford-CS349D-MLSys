@@ -327,6 +327,29 @@ class Attention(nn.Module):
         )
         return out.transpose(1, 2).contiguous()
 
+    def _paged_decode_attention_flash(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        # Clean compile- and cuda-graph-friendly flash-attn paged decode.
+        # Caller is responsible for guaranteeing flash-attn is available
+        # and the inputs are CUDA tensors. No try/except, no Python
+        # side-effects — torch.compile traces this as a single op.
+        return _flash_attn_with_kvcache(
+            q,
+            paged_ctx.k_cache_pool[layer_idx],
+            paged_ctx.v_cache_pool[layer_idx],
+            k=k,
+            v=v,
+            cache_seqlens=paged_ctx.cache_seqlens,
+            block_table=paged_ctx.block_table,
+            causal=True,
+        )
+
     def _paged_decode_attention(
         self,
         q: torch.Tensor,
@@ -348,16 +371,7 @@ class Attention(nn.Module):
             and not _flash_decode_disabled
         ):
             try:
-                out = _flash_attn_with_kvcache(
-                    q,
-                    k_cache,
-                    v_cache,
-                    k=k,
-                    v=v,
-                    cache_seqlens=paged_ctx.cache_seqlens,
-                    block_table=paged_ctx.block_table,
-                    causal=True,
-                )
+                out = self._paged_decode_attention_flash(q, k, v, paged_ctx, layer_idx)
                 if not _Attention_flash_decode_logged[0]:
                     _Attention_flash_decode_logged[0] = True
                     logger.info("paged decode: flash_attn_with_kvcache active")
@@ -557,7 +571,9 @@ class TransformerBlock(nn.Module):
         residual = hidden
         hidden = self.input_layernorm(hidden)
         q, k, v = self.self_attn._paged_pre_attn(hidden, cos, sin)
-        attn_out = self.self_attn._paged_decode_attention(
+        # Compile- and graph-friendly attention path: avoids the try/except
+        # and global-mutation graph breaks that gate eager safety.
+        attn_out = self.self_attn._paged_decode_attention_flash(
             q,
             k,
             v,
@@ -578,15 +594,26 @@ class TransformerBlock(nn.Module):
         hidden = residual + hidden
         return hidden, (k, v)
 
-    def enable_torch_compile(self) -> None:
+    def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
         # Compile the whole paged decode block at static bucket shapes. This
         # keeps attention, output projection, and MLP in one compiled region
         # and avoids the many small dynamic subfunction calls.
-        self._compiled_paged_decode = torch.compile(
-            self._paged_decode_block,
-            dynamic=False,
-            options={"triton.cudagraphs": False},
-        )
+        if internal_cudagraphs:
+            # mode="reduce-overhead" wraps the compiled function with
+            # inductor-managed cudagraphs. Use this when there is no
+            # manual cuda-graph layer above us — it gives the launch-
+            # overhead reduction the manual graph would otherwise provide.
+            self._compiled_paged_decode = torch.compile(
+                self._paged_decode_block,
+                dynamic=False,
+                mode="reduce-overhead",
+            )
+        else:
+            self._compiled_paged_decode = torch.compile(
+                self._paged_decode_block,
+                dynamic=False,
+                options={"triton.cudagraphs": False},
+            )
 
     def forward(
         self,
@@ -652,9 +679,9 @@ class TransformerModel(nn.Module):
         )
         self.use_torch_compile = False
 
-    def enable_torch_compile(self) -> None:
+    def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
         for layer in self.layers:
-            layer.enable_torch_compile()
+            layer.enable_torch_compile(internal_cudagraphs=internal_cudagraphs)
         self.use_torch_compile = True
 
     def forward(
@@ -730,13 +757,20 @@ class CausalLM(nn.Module):
             return F.linear(hidden, self.model.embed_tokens.weight)
         return self.lm_head(hidden)
 
-    def enable_torch_compile(self) -> None:
-        self.model.enable_torch_compile()
-        self._compiled_logits = torch.compile(
-            self._project_logits,
-            dynamic=False,
-            options={"triton.cudagraphs": False},
-        )
+    def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
+        self.model.enable_torch_compile(internal_cudagraphs=internal_cudagraphs)
+        if internal_cudagraphs:
+            self._compiled_logits = torch.compile(
+                self._project_logits,
+                dynamic=False,
+                mode="reduce-overhead",
+            )
+        else:
+            self._compiled_logits = torch.compile(
+                self._project_logits,
+                dynamic=False,
+                options={"triton.cudagraphs": False},
+            )
 
     def forward(
         self,
