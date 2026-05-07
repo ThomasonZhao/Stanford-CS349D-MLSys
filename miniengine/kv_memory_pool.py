@@ -39,6 +39,7 @@ class KVMemoryPool:
         dtype: torch.dtype,
         device: str,
         reserve_scratch_page: bool = False,
+        reserve_scratch_pages: int = 0,
     ) -> None:
         if num_pages <= 0:
             raise ValueError("num_pages must be positive")
@@ -50,8 +51,14 @@ class KVMemoryPool:
             raise ValueError("num_kv_heads must be positive")
         if head_dim <= 0:
             raise ValueError("head_dim must be positive")
-        if reserve_scratch_page and num_pages < 2:
-            raise ValueError("reserve_scratch_page requires num_pages >= 2")
+        if reserve_scratch_pages < 0:
+            raise ValueError("reserve_scratch_pages must be non-negative")
+        if reserve_scratch_page:
+            reserve_scratch_pages = max(reserve_scratch_pages, 1)
+        if reserve_scratch_pages >= num_pages:
+            raise ValueError(
+                "scratch pages must leave at least one allocatable KV page"
+            )
 
         self.num_pages = num_pages
         self.page_size = page_size
@@ -60,6 +67,7 @@ class KVMemoryPool:
         self.head_dim = head_dim
         self.dtype = dtype
         self.device = torch.device(device)
+        self._scratch_page_indices: list[int] = list(range(reserve_scratch_pages))
 
         shape = (num_pages, page_size, num_kv_heads, head_dim)
         self._k = [
@@ -70,11 +78,20 @@ class KVMemoryPool:
             torch.empty(shape, dtype=dtype, device=self.device)
             for _ in range(num_layers)
         ]
-        # Scratch page for CUDA-graph padded rows: never allocated to a real
-        # request, so flash-attn's in-place K/V write into the padded slots
-        # cannot corrupt any active request's cache.
-        self._scratch_page_idx: int | None = 0 if reserve_scratch_page else None
-        first_free = 1 if reserve_scratch_page else 0
+        # Scratch pages for CUDA-graph capture/padding: never allocated to a
+        # real request, so flash-attn's in-place K/V writes cannot corrupt any
+        # active request's cache. They are zeroed once so any masked reads are
+        # deterministic if a backend touches them.
+        if self._scratch_page_indices:
+            for cache in self._k:
+                cache[:reserve_scratch_pages].zero_()
+            for cache in self._v:
+                cache[:reserve_scratch_pages].zero_()
+
+        self._scratch_page_idx: int | None = (
+            self._scratch_page_indices[0] if self._scratch_page_indices else None
+        )
+        first_free = reserve_scratch_pages
         self._free: deque[int] = deque(range(first_free, num_pages))
         self._free_set: set[int] = set(range(first_free, num_pages))
 
@@ -123,6 +140,11 @@ class KVMemoryPool:
         return self._scratch_page_idx
 
     @property
+    def scratch_page_indices(self) -> list[int]:
+        """Reserved scratch page indices, if any."""
+        return list(self._scratch_page_indices)
+
+    @property
     def k_caches(self) -> list[torch.Tensor]:
         """Per-layer K cache tensors.
 
@@ -161,6 +183,7 @@ class KVMemoryPool:
         device: str,
         bytes_budget: int,
         reserve_scratch_page: bool = False,
+        reserve_scratch_pages: int = 0,
     ) -> KVMemoryPool:
         """Convenience: derive `num_pages` from a memory budget."""
         if bytes_budget <= 0:
@@ -193,6 +216,7 @@ class KVMemoryPool:
             dtype=dtype,
             device=device,
             reserve_scratch_page=reserve_scratch_page,
+            reserve_scratch_pages=reserve_scratch_pages,
         )
 
 

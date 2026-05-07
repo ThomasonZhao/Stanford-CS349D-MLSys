@@ -27,6 +27,7 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 
 from miniengine.core import Request
+from miniengine import model as model_module
 from miniengine.kv_memory_pool import KVMemoryPool
 from miniengine.model import CausalLM, ModelConfig, PagedContext, load_weights
 from miniengine.sampler import sample_token, sample_tokens_batched
@@ -59,8 +60,21 @@ class Engine:
         self.torch_compile = torch_compile
         self.max_running = max_running
         self.max_decode_pages_per_seq = max_decode_pages_per_seq
-        self.cuda_graph = cuda_graph and mode == "paged"
-        self.cuda_graph_batch_sizes = cuda_graph_batch_sizes or []
+        if cuda_graph:
+            self._validate_cuda_graph_config(
+                mode=mode,
+                device=device,
+                page_size=page_size,
+            )
+        self.cuda_graph = cuda_graph
+        self.cuda_graph_batch_sizes = (
+            self._cuda_graph_exact_batch_sizes(max_running) if cuda_graph else []
+        )
+        if cuda_graph_batch_sizes:
+            logger.info(
+                "Ignoring --cuda-graph-batch-sizes; capturing exact buckets 1..%d",
+                max_running,
+            )
         self.kv_pool: KVMemoryPool | None = None
         self.cuda_graph_runner = None
         self._dec_buffer_capacity = 0
@@ -104,7 +118,7 @@ class Engine:
         self.model.eval()
 
         if torch_compile:
-            logger.info("Enabling torch.compile for paged decode MLPs")
+            logger.info("Enabling torch.compile for static paged decode buckets")
             self.model.enable_torch_compile()
 
         if mode == "paged":
@@ -118,21 +132,17 @@ class Engine:
                 device=device,
                 bytes_budget=bytes_budget,
                 reserve_scratch_page=self.cuda_graph,
+                reserve_scratch_pages=max_running if self.cuda_graph else 0,
             )
             logger.info(
                 "Paged KV pool ready  pages=%d  page_size=%d  free=%d  scratch=%s",
                 self.kv_pool.num_pages,
                 self.kv_pool.page_size,
                 self.kv_pool.num_free,
-                self.kv_pool.scratch_page_idx,
-            )
-            graph_capacity = (
-                max(max_running, max(self.cuda_graph_batch_sizes))
-                if self.cuda_graph
-                else max_running
+                self.kv_pool.scratch_page_indices,
             )
             self._allocate_decode_buffers(
-                capacity=graph_capacity,
+                capacity=max_running,
                 pages_per_seq=max_decode_pages_per_seq,
             )
             if self.cuda_graph:
@@ -168,6 +178,28 @@ class Engine:
             self.stop_token_ids,
             sum(p.numel() for p in self.model.parameters()) // 1_000_000,
         )
+
+    @staticmethod
+    def _cuda_graph_exact_batch_sizes(max_running: int) -> list[int]:
+        if max_running <= 0:
+            raise ValueError("max_running must be positive when using CUDA graph")
+        return list(range(1, max_running + 1))
+
+    @staticmethod
+    def _validate_cuda_graph_config(
+        *, mode: str, device: str, page_size: int
+    ) -> None:
+        if mode != "paged":
+            raise ValueError("CUDA graph requires paged mode")
+        if page_size <= 0:
+            raise ValueError("CUDA graph requires a positive page_size")
+        device_obj = torch.device(device)
+        if device_obj.type != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("CUDA graph requires an available CUDA device")
+        if model_module._flash_attn_with_kvcache is None:
+            raise RuntimeError("CUDA graph requires flash-attn paged decode")
+        if page_size % 256 != 0:
+            raise ValueError("CUDA graph requires page_size divisible by 256")
 
     def _compute_kv_budget(self, mem_fraction_static: float) -> int:
         if not 0 < mem_fraction_static <= 1:
@@ -302,6 +334,14 @@ class Engine:
             and pages_per_seq <= self._dec_buffer_pages_per_seq
         ):
             return
+
+        if getattr(self, "cuda_graph_runner", None) is not None:
+            raise RuntimeError(
+                "decode buffers cannot grow after CUDA graph capture "
+                f"(requested batch={batch_size}, pages_per_seq={pages_per_seq}; "
+                f"capacity batch={self._dec_buffer_capacity}, "
+                f"pages_per_seq={self._dec_buffer_pages_per_seq})"
+            )
 
         capacity = max(batch_size, self._dec_buffer_capacity, self.max_running)
         page_capacity = max(
@@ -490,16 +530,13 @@ class Engine:
                 logit_positions=logit_positions,
             )
 
-            token_ids: list[int] = []
             for i, req in enumerate(requests):
                 req.cache_len = req.num_input_tokens
-                token_ids.append(
-                    sample_token(
-                        logits[:, i, :],
-                        req.sampling_params,
-                        req.output_ids,
-                    )
-                )
+            token_ids = sample_tokens_batched(
+                logits[0],
+                [req.sampling_params for req in requests],
+                [req.output_ids for req in requests],
+            )
             return token_ids
         except Exception:
             for pages in allocated:
@@ -533,6 +570,7 @@ class Engine:
                 req.page_table.append(page)
                 grown_pages.append((req, page))
 
+            max_pages = max(len(req.page_table) for req in requests)
             (
                 block_table,
                 cache_seqlens,
@@ -542,9 +580,12 @@ class Engine:
 
             if (
                 self.cuda_graph_runner is not None
-                and len(requests) <= self.cuda_graph_runner.max_bucket
+                and self.cuda_graph_runner.can_replay(
+                    len(requests),
+                    max_pages,
+                )
             ):
-                logits = self.cuda_graph_runner.replay(len(requests))
+                logits = self.cuda_graph_runner.replay(len(requests), max_pages)
             else:
                 paged_ctx = self._make_paged_context(
                     is_prefill=False,

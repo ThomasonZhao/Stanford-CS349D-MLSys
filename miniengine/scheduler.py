@@ -124,17 +124,21 @@ class Scheduler:
                 return finished
             req = self.waiting.popleft()
 
-        req.status = RequestStatus.RUNNING
-        token_id = self.engine.prefill(req)
-        req.output_ids.append(token_id)
-        self._stream_token(req, token_id)
-
-        while not self._check_finished(req, token_id):
-            token_id = self.engine.decode_step(req)
+        try:
+            req.status = RequestStatus.RUNNING
+            token_id = self.engine.prefill(req)
             req.output_ids.append(token_id)
             self._stream_token(req, token_id)
 
-        self._finish_request(req, finished)
+            while not self._check_finished(req, token_id):
+                token_id = self.engine.decode_step(req)
+                req.output_ids.append(token_id)
+                self._stream_token(req, token_id)
+
+            self._finish_request(req, finished)
+        except Exception:
+            self._fail_request(req, finished)
+            raise
         return finished
 
     def _step_batched(self) -> list[Request]:
@@ -154,28 +158,47 @@ class Scheduler:
             ):
                 to_prefill.append(self.waiting.popleft())
 
-        for req in to_prefill:
-            req.status = RequestStatus.RUNNING
-            token_id = self.engine.prefill(req)
-            req.output_ids.append(token_id)
-            self._stream_token(req, token_id)
-            if self._check_finished(req, token_id):
-                self._finish_request(req, finished)
-            else:
-                self.running.append(req)
-
-        # ── Phase 2: batched decode ─────────────────────────────────────
-        if self.running:
-            token_ids = self.engine.batched_decode(self.running)
-            still_running: list[Request] = []
-            for req, token_id in zip(self.running, token_ids):
+        try:
+            for req in to_prefill:
+                req.status = RequestStatus.RUNNING
+                token_id = self.engine.prefill(req)
                 req.output_ids.append(token_id)
                 self._stream_token(req, token_id)
                 if self._check_finished(req, token_id):
                     self._finish_request(req, finished)
                 else:
-                    still_running.append(req)
-            self.running = still_running
+                    self.running.append(req)
+        except Exception:
+            for req in to_prefill:
+                if req.status is not RequestStatus.FINISHED:
+                    self._fail_request(req, finished)
+            self.running = [
+                req for req in self.running if req.status is not RequestStatus.FINISHED
+            ]
+            raise
+
+        # ── Phase 2: batched decode ─────────────────────────────────────
+        if self.running:
+            decode_batch = list(self.running)
+            try:
+                token_ids = self.engine.batched_decode(decode_batch)
+                if len(token_ids) != len(decode_batch):
+                    raise RuntimeError("batched decode returned wrong token count")
+                still_running: list[Request] = []
+                for req, token_id in zip(decode_batch, token_ids):
+                    req.output_ids.append(token_id)
+                    self._stream_token(req, token_id)
+                    if self._check_finished(req, token_id):
+                        self._finish_request(req, finished)
+                    else:
+                        still_running.append(req)
+                self.running = still_running
+            except Exception:
+                self.running = []
+                for req in decode_batch:
+                    if req.status is not RequestStatus.FINISHED:
+                        self._fail_request(req, finished)
+                raise
 
         return finished
 
@@ -217,28 +240,51 @@ class Scheduler:
                 available_pages -= required_pages
 
         if to_prefill:
-            for req in to_prefill:
-                req.status = RequestStatus.RUNNING
-            token_ids = self.engine.paged_prefill(to_prefill)
-            for req, token_id in zip(to_prefill, token_ids):
-                req.output_ids.append(token_id)
-                self._stream_token(req, token_id)
-                if self._check_finished(req, token_id):
-                    self._finish_request(req, finished)
-                else:
-                    self.running.append(req)
+            try:
+                for req in to_prefill:
+                    req.status = RequestStatus.RUNNING
+                token_ids = self.engine.paged_prefill(to_prefill)
+                if len(token_ids) != len(to_prefill):
+                    raise RuntimeError("paged prefill returned wrong token count")
+                for req, token_id in zip(to_prefill, token_ids):
+                    req.output_ids.append(token_id)
+                    self._stream_token(req, token_id)
+                    if self._check_finished(req, token_id):
+                        self._finish_request(req, finished)
+                    else:
+                        self.running.append(req)
+            except Exception:
+                for req in to_prefill:
+                    if req.status is not RequestStatus.FINISHED:
+                        self._fail_request(req, finished)
+                self.running = [
+                    req
+                    for req in self.running
+                    if req.status is not RequestStatus.FINISHED
+                ]
+                raise
 
         if self.running:
-            token_ids = self.engine.paged_decode(self.running)
-            still_running: list[Request] = []
-            for req, token_id in zip(self.running, token_ids):
-                req.output_ids.append(token_id)
-                self._stream_token(req, token_id)
-                if self._check_finished(req, token_id):
-                    self._finish_request(req, finished)
-                else:
-                    still_running.append(req)
-            self.running = still_running
+            decode_batch = list(self.running)
+            try:
+                token_ids = self.engine.paged_decode(decode_batch)
+                if len(token_ids) != len(decode_batch):
+                    raise RuntimeError("paged decode returned wrong token count")
+                still_running: list[Request] = []
+                for req, token_id in zip(decode_batch, token_ids):
+                    req.output_ids.append(token_id)
+                    self._stream_token(req, token_id)
+                    if self._check_finished(req, token_id):
+                        self._finish_request(req, finished)
+                    else:
+                        still_running.append(req)
+                self.running = still_running
+            except Exception:
+                self.running = []
+                for req in decode_batch:
+                    if req.status is not RequestStatus.FINISHED:
+                        self._fail_request(req, finished)
+                raise
 
         return finished
 
@@ -262,12 +308,7 @@ class Scheduler:
     def _finish_request(self, req: Request, finished_list: list[Request]) -> None:
         """Mark a request as finished and free its resources."""
         req.status = RequestStatus.FINISHED
-        if self.mode == "paged" and self.engine.kv_pool is not None:
-            if req.page_table:
-                self.engine.kv_pool.free(req.page_table)
-            req.page_table = []
-            req.cache_len = 0
-        req.kv_cache = None  # release GPU memory
+        self._release_request_resources(req)
         req.token_queue.put(TokenOutput(token_id=-1, token_text="", finished=True))
         finished_list.append(req)
 
@@ -280,3 +321,21 @@ class Scheduler:
             len(self.running),
             len(self.waiting),
         )
+
+    def _fail_request(self, req: Request, finished_list: list[Request]) -> None:
+        """Terminate a failed request so clients do not block forever."""
+        if req.status is RequestStatus.FINISHED:
+            return
+        req.status = RequestStatus.FINISHED
+        self._release_request_resources(req)
+        req.token_queue.put(TokenOutput(token_id=-1, token_text="", finished=True))
+        finished_list.append(req)
+        logger.debug("Marked failed request %s finished", req.request_id)
+
+    def _release_request_resources(self, req: Request) -> None:
+        if self.mode == "paged" and self.engine.kv_pool is not None:
+            if req.page_table:
+                self.engine.kv_pool.free(req.page_table)
+            req.page_table = []
+            req.cache_len = 0
+        req.kv_cache = None  # release GPU memory

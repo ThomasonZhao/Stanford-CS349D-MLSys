@@ -226,14 +226,11 @@ class Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
-        self._compiled_paged_pre_attn = None
-
     def _paged_pre_attn(
         self, hidden: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Pre-attention dense compute for the paged path: QKV projection,
-        # head reshape, QK-norm, RoPE. Pure pointwise + linear ops with
-        # stable shapes during decode — a good torch.compile target.
+        # head reshape, QK-norm, RoPE.
         bsz, seq_len, _ = hidden.shape
         q = self.q_proj(hidden).view(bsz, seq_len, self.num_heads, self.head_dim)
         k = self.k_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim)
@@ -243,16 +240,6 @@ class Attention(nn.Module):
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
         return q, k, v
-
-    def enable_torch_compile(self) -> None:
-        # Disable inductor's internal cudagraph backing so the compiled
-        # callable can be captured inside our outer manual CUDA graph
-        # without colliding on tensor-pool reuse.
-        self._compiled_paged_pre_attn = torch.compile(
-            self._paged_pre_attn,
-            dynamic=True,
-            options={"triton.cudagraphs": False},
-        )
 
     def _expand_kv_for_gqa(
         self, k: torch.Tensor, v: torch.Tensor, bsz: int
@@ -418,6 +405,10 @@ class Attention(nn.Module):
         flat_v = v_cache.view(-1, self.num_kv_heads, self.head_dim)
         gathered_k = flat_k[flat_offsets].permute(0, 2, 1, 3).contiguous()
         gathered_v = flat_v[flat_offsets].permute(0, 2, 1, 3).contiguous()
+        valid_positions = positions.view(1, -1) < kv_lens.to(q.device).view(-1, 1)
+        valid_positions = valid_positions.view(bsz, 1, max_kv_len, 1)
+        gathered_k = gathered_k.masked_fill(~valid_positions, 0.0)
+        gathered_v = gathered_v.masked_fill(~valid_positions, 0.0)
         gathered_k, gathered_v = self._expand_kv_for_gqa(gathered_k, gathered_v, bsz)
 
         mask_positions = torch.arange(max_kv_len, device=q.device).view(1, 1, 1, -1)
@@ -453,8 +444,7 @@ class Attention(nn.Module):
                             -inf = ignore.
             paged_ctx:     optional paged KV cache context.
             layer_idx:     transformer layer index when using paged_ctx.
-            use_compiled_decode: route paged decode pre-attention through
-                            the torch.compile-fused path when available.
+            use_compiled_decode: handled by TransformerBlock for paged decode.
 
         Returns:
             output:       (batch, seq_len, hidden_size)
@@ -463,13 +453,7 @@ class Attention(nn.Module):
         bsz, seq_len, _ = hidden.shape
 
         if paged_ctx is not None:
-            if (
-                use_compiled_decode
-                and self._compiled_paged_pre_attn is not None
-            ):
-                q, k, v = self._compiled_paged_pre_attn(hidden, cos, sin)
-            else:
-                q, k, v = self._paged_pre_attn(hidden, cos, sin)
+            q, k, v = self._paged_pre_attn(hidden, cos, sin)
         else:
             # Non-paged SDPA keeps the original (batch, heads, seq, dim) layout.
             q = (
@@ -556,24 +540,53 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.self_attn = Attention(config)
         self.mlp = MLP(config)
-        self._compiled_decode_ffn = None
+        self._compiled_paged_decode = None
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-    def _decode_ffn(self, residual: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
-        # Fused post-norm + MLP + residual; safe to compile (no attention,
-        # no Python branching, stable shapes during decode).
-        return residual + self.mlp(self.post_attention_layernorm(hidden))
+    def _paged_decode_block(
+        self,
+        hidden: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        residual = hidden
+        hidden = self.input_layernorm(hidden)
+        q, k, v = self.self_attn._paged_pre_attn(hidden, cos, sin)
+        attn_out = self.self_attn._paged_decode_attention(
+            q,
+            k,
+            v,
+            paged_ctx,
+            layer_idx,
+        )
+        bsz, seq_len, _, _ = q.shape
+        attn_out = attn_out.reshape(
+            bsz,
+            seq_len,
+            self.self_attn.num_heads * self.self_attn.head_dim,
+        )
+        hidden = residual + self.self_attn.o_proj(attn_out)
+
+        residual = hidden
+        hidden = self.post_attention_layernorm(hidden)
+        hidden = self.mlp(hidden)
+        hidden = residual + hidden
+        return hidden, (k, v)
 
     def enable_torch_compile(self) -> None:
-        self._compiled_decode_ffn = torch.compile(
-            self._decode_ffn,
-            dynamic=True,
+        # Compile the whole paged decode block at static bucket shapes. This
+        # keeps attention, output projection, and MLP in one compiled region
+        # and avoids the many small dynamic subfunction calls.
+        self._compiled_paged_decode = torch.compile(
+            self._paged_decode_block,
+            dynamic=False,
             options={"triton.cudagraphs": False},
         )
-        self.self_attn.enable_torch_compile()
 
     def forward(
         self,
@@ -586,6 +599,16 @@ class TransformerBlock(nn.Module):
         layer_idx: int | None = None,
         use_compiled_decode: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        if (
+            use_compiled_decode
+            and self._compiled_paged_decode is not None
+            and paged_ctx is not None
+            and not paged_ctx.is_prefill
+        ):
+            if layer_idx is None:
+                raise ValueError("layer_idx is required for paged decode")
+            return self._compiled_paged_decode(hidden, cos, sin, paged_ctx, layer_idx)
+
         residual = hidden
         hidden = self.input_layernorm(hidden)
         hidden, new_kv = self.self_attn(
@@ -600,13 +623,10 @@ class TransformerBlock(nn.Module):
         )
         hidden = residual + hidden
 
-        if use_compiled_decode and self._compiled_decode_ffn is not None:
-            hidden = self._compiled_decode_ffn(hidden, hidden)
-        else:
-            residual = hidden
-            hidden = self.post_attention_layernorm(hidden)
-            hidden = self.mlp(hidden)
-            hidden = residual + hidden
+        residual = hidden
+        hidden = self.post_attention_layernorm(hidden)
+        hidden = self.mlp(hidden)
+        hidden = residual + hidden
 
         return hidden, new_kv
 
@@ -701,11 +721,22 @@ class CausalLM(nn.Module):
         super().__init__()
         self.config = config
         self.model = TransformerModel(config)
+        self._compiled_logits = None
         if not config.tie_word_embeddings:
             self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+    def _project_logits(self, hidden: torch.Tensor) -> torch.Tensor:
+        if self.config.tie_word_embeddings:
+            return F.linear(hidden, self.model.embed_tokens.weight)
+        return self.lm_head(hidden)
+
     def enable_torch_compile(self) -> None:
         self.model.enable_torch_compile()
+        self._compiled_logits = torch.compile(
+            self._project_logits,
+            dynamic=False,
+            options={"triton.cudagraphs": False},
+        )
 
     def forward(
         self,
@@ -727,10 +758,15 @@ class CausalLM(nn.Module):
         if logit_positions is not None:
             positions = logit_positions.to(device=hidden.device, dtype=torch.long)
             hidden = hidden.index_select(1, positions)
-        if self.config.tie_word_embeddings:
-            logits = F.linear(hidden, self.model.embed_tokens.weight)
+        if (
+            self._compiled_logits is not None
+            and paged_ctx is not None
+            and not paged_ctx.is_prefill
+            and logit_positions is None
+        ):
+            logits = self._compiled_logits(hidden)
         else:
-            logits = self.lm_head(hidden)
+            logits = self._project_logits(hidden)
         return logits, new_kv_caches
 
 

@@ -1,11 +1,12 @@
 """Manual CUDA-graph capture for paged decode (Part C extra credit).
 
 Captures one CUDA graph per bucket batch size against the engine's
-pre-allocated decode input buffers. At runtime, the actual batch is
-padded up to the nearest bucket and the graph is replayed.
+pre-allocated decode input buffers. At runtime, exact batch-size buckets
+are replayed whenever possible.
 
-Padded rows write their K/V into the pool's scratch page so the
-in-place flash-attn write cannot corrupt any active request.
+Capture-time dummy rows and any future padded rows write K/V into
+distinct reserved scratch pages so the in-place flash-attn write cannot
+corrupt any active request or race another scratch row.
 
 Sampling stays outside the captured region. The runner returns the
 logits slice corresponding to the actual batch size, and the engine
@@ -48,15 +49,18 @@ class CudaGraphRunner:
 
         self.graphs: dict[int, torch.cuda.CUDAGraph] = {}
         self.logits_buffers: dict[int, torch.Tensor] = {}
+        self._captured_buffer_ptrs: tuple[int, int, int, int] | None = None
 
         pool = engine.kv_pool
         if pool is None:
             raise RuntimeError("CudaGraphRunner requires a paged KV pool")
-        if pool.scratch_page_idx is None:
+        self._scratch_pages = pool.scratch_page_indices
+        if len(self._scratch_pages) < self.max_bucket:
             raise RuntimeError(
-                "CudaGraphRunner requires the KV pool to reserve a scratch page"
+                "CudaGraphRunner requires one reserved scratch page per "
+                f"captured row (need {self.max_bucket}, "
+                f"have {len(self._scratch_pages)})"
             )
-        self._scratch_page = pool.scratch_page_idx
 
     def _make_paged_ctx(self, batch_size: int) -> PagedContext:
         pool = self.engine.kv_pool
@@ -77,26 +81,61 @@ class CudaGraphRunner:
         if batch_size >= bucket:
             return
         pad_slice = slice(batch_size, bucket)
-        # Padded rows must point block_table at the scratch page so the
-        # flash-attn in-place K/V write lands somewhere safe, and the
-        # attention compute on those rows is valid (just discarded).
+        pad_count = bucket - batch_size
+        scratch_pages = torch.tensor(
+            self._scratch_pages[:pad_count],
+            dtype=torch.int32,
+            device=self.engine._dec_block_table.device,
+        )
+        # Padded rows must point block_table at distinct scratch pages so the
+        # flash-attn in-place K/V writes land somewhere safe without racing.
         self.engine._dec_input_ids[pad_slice, 0] = 0
         self.engine._dec_position_ids[pad_slice, 0] = 0
         self.engine._dec_cache_seqlens[pad_slice] = 0
         self.engine._dec_block_table[pad_slice, : self.max_pages_per_seq] = (
-            self._scratch_page
+            scratch_pages.view(pad_count, 1)
         )
 
     def _seed_capture_inputs(self, bucket: int) -> None:
         # Fill capture-time inputs with a valid configuration: every row
-        # treated as if it were a real request whose first decode step
-        # writes at position 0 of the scratch page. Safe and shape-stable.
+        # treated as if it were a real request whose first decode step writes
+        # at position 0 of its own zeroed scratch page. Safe and shape-stable.
+        scratch_pages = torch.tensor(
+            self._scratch_pages[:bucket],
+            dtype=torch.int32,
+            device=self.engine._dec_block_table.device,
+        )
         self.engine._dec_input_ids[:bucket, 0] = 0
         self.engine._dec_position_ids[:bucket, 0] = 0
         self.engine._dec_cache_seqlens[:bucket] = 0
         self.engine._dec_block_table[:bucket, : self.max_pages_per_seq] = (
-            self._scratch_page
+            scratch_pages.view(bucket, 1)
         )
+
+    def _current_buffer_ptrs(self) -> tuple[int, int, int, int]:
+        engine = self.engine
+        if (
+            engine._dec_input_ids is None
+            or engine._dec_position_ids is None
+            or engine._dec_cache_seqlens is None
+            or engine._dec_block_table is None
+        ):
+            raise RuntimeError("decode buffers are not initialized")
+        return (
+            engine._dec_input_ids.data_ptr(),
+            engine._dec_position_ids.data_ptr(),
+            engine._dec_cache_seqlens.data_ptr(),
+            engine._dec_block_table.data_ptr(),
+        )
+
+    def _check_buffer_identity(self) -> None:
+        if self._captured_buffer_ptrs is None:
+            raise RuntimeError("CUDA graph runner has not captured any graphs")
+        if self._current_buffer_ptrs() != self._captured_buffer_ptrs:
+            raise RuntimeError(
+                "decode buffers changed after CUDA graph capture; increase "
+                "max_running/max_decode_pages_per_seq or disable CUDA graph"
+            )
 
     @torch.inference_mode()
     def capture(self, warmup_iters: int = 3) -> None:
@@ -123,6 +162,7 @@ class CudaGraphRunner:
                 f"({engine._dec_buffer_pages_per_seq}) is smaller than the "
                 f"runner's max_pages_per_seq ({self.max_pages_per_seq})"
             )
+        self._captured_buffer_ptrs = self._current_buffer_ptrs()
 
         for bucket in self.bucket_sizes:
             self._seed_capture_inputs(bucket)
@@ -167,10 +207,26 @@ class CudaGraphRunner:
             f"{self.max_bucket}; capture more buckets or fall back to eager"
         )
 
+    def can_replay(self, batch_size: int, pages_per_seq: int) -> bool:
+        """Whether replay is valid for the current decode shape."""
+        return (
+            batch_size <= self.max_bucket
+            and pages_per_seq <= self.max_pages_per_seq
+            and self._pick_bucket(batch_size) in self.graphs
+        )
+
     @torch.inference_mode()
-    def replay(self, batch_size: int) -> torch.Tensor:
+    def replay(self, batch_size: int, pages_per_seq: int) -> torch.Tensor:
         """Replay the smallest bucket >= batch_size; return logits[:batch_size]."""
+        if pages_per_seq > self.max_pages_per_seq:
+            raise RuntimeError(
+                f"page table width {pages_per_seq} exceeds CUDA-graph capture "
+                f"width {self.max_pages_per_seq}"
+            )
+        self._check_buffer_identity()
         bucket = self._pick_bucket(batch_size)
+        if bucket not in self.graphs:
+            raise RuntimeError(f"CUDA graph bucket {bucket} has not been captured")
         self._set_padding_safe(batch_size, bucket)
         self.graphs[bucket].replay()
         # Sampling reads logits in eager; final shape (batch_size, 1, vocab).

@@ -76,8 +76,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cuda-graph-batch-sizes",
         type=str,
-        default="1,2,4,8,16,32",
-        help="Comma-separated bucket batch sizes to capture",
+        default="",
+        help="Deprecated; CUDA graph captures exact batch sizes 1..max-running",
     )
     return p.parse_args()
 

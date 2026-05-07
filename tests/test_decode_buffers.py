@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 
 from miniengine.core import Request
 from miniengine.engine import Engine
@@ -15,6 +16,7 @@ def _fake_engine(max_running: int = 2, max_pages: int = 2) -> Engine:
     engine._dec_position_ids = None
     engine._dec_cache_seqlens = None
     engine._dec_block_table = None
+    engine.cuda_graph_runner = None
     engine._dec_input_ids_cpu = None
     engine._dec_position_ids_cpu = None
     engine._dec_cache_seqlens_cpu = None
@@ -52,6 +54,17 @@ class DecodeBufferTest(unittest.TestCase):
 
         self.assertGreaterEqual(engine._dec_buffer_pages_per_seq, 2)
         self.assertEqual(block_table.tolist(), [[3, 4]])
+
+    def test_graph_active_decode_buffers_do_not_reallocate(self) -> None:
+        engine = _fake_engine(max_running=1, max_pages=1)
+        engine.cuda_graph_runner = SimpleNamespace()
+        request = Request("a", output_ids=[11], page_table=[3, 4], cache_len=5)
+
+        with self.assertRaisesRegex(RuntimeError, "cannot grow after CUDA graph"):
+            engine._prepare_paged_decode_inputs([request])
+
+        self.assertEqual(engine._dec_buffer_capacity, 1)
+        self.assertEqual(engine._dec_buffer_pages_per_seq, 1)
 
 
 if __name__ == "__main__":
