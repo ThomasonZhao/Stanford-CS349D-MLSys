@@ -37,6 +37,7 @@ _Attention_flash_decode_logged = [False]
 _Attention_flash_decode_fallback_logged = [False]
 _Attention_flash_prefill_logged = [False]
 _Attention_flash_prefill_fallback_logged = [False]
+_flash_decode_disabled = False
 
 
 # ── Config ──────────────────────────────────────────────────────────────
@@ -318,7 +319,12 @@ class Attention(nn.Module):
         k_cache = paged_ctx.k_cache_pool[layer_idx]
         v_cache = paged_ctx.v_cache_pool[layer_idx]
 
-        if _flash_attn_with_kvcache is not None and q.is_cuda:
+        global _flash_decode_disabled
+        if (
+            _flash_attn_with_kvcache is not None
+            and q.is_cuda
+            and not _flash_decode_disabled
+        ):
             try:
                 out = _flash_attn_with_kvcache(
                     q.transpose(1, 2).contiguous(),
@@ -335,10 +341,12 @@ class Attention(nn.Module):
                     logger.info("paged decode: flash_attn_with_kvcache active")
                 return out.transpose(1, 2).contiguous()
             except Exception:
+                _flash_decode_disabled = True
                 if not _Attention_flash_decode_fallback_logged[0]:
                     _Attention_flash_decode_fallback_logged[0] = True
                     logger.warning(
-                        "flash-attn paged decode failed; using SDPA fallback",
+                        "flash-attn paged decode failed; disabling flash decode "
+                        "and using SDPA fallback",
                         exc_info=True,
                     )
 
