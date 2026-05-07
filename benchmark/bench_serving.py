@@ -35,7 +35,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import aiohttp
 import numpy as np
 
-
 # ── Per-request metrics ────────────────────────────────────────────────
 
 
@@ -266,6 +265,9 @@ async def run_at_concurrency(
     for r in requests:
         await queue.put(r)
 
+    total = len(requests)
+    t_start = time.perf_counter()
+
     async def worker(session: aiohttp.ClientSession):
         while True:
             try:
@@ -274,6 +276,17 @@ async def run_at_concurrency(
                 return
             m = await send_request(session, base_url, req)
             results.append(m)
+            done = len(results)
+            elapsed = time.perf_counter() - t_start
+            tag = "ERR" if m.error else "ok"
+            print(
+                f"    [{done:>3}/{total}] {tag} "
+                f"in={m.input_len} out={m.num_output_tokens} "
+                f"ttft={(m.ttft or 0)*1000:.0f}ms "
+                f"compl={(m.completion_latency or 0)*1000:.0f}ms "
+                f"(elapsed {elapsed:.1f}s)",
+                flush=True,
+            )
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=600),
@@ -366,8 +379,8 @@ async def async_main(args, requests_pool, concurrencies):
     all_results: dict[int, list[RequestMetrics]] = {}
 
     for conc in concurrencies:
-        # Use a fresh copy of requests each time
-        reqs = requests_pool[: args.num_requests]
+        n = args.num_requests if args.num_requests is not None else max(conc * 2, 8)
+        reqs = requests_pool[:n]
         print(f"\n  Running concurrency={conc} ({len(reqs)} requests)...", flush=True)
 
         t0 = time.perf_counter()
@@ -400,17 +413,22 @@ def main():
         default=None,
         help="HuggingFace model id (for tokenizer). Auto-detected from server if not set.",
     )
-    p.add_argument("--num-requests", type=int, default=100)
+    p.add_argument(
+        "--num-requests",
+        type=int,
+        default=None,
+        help="Default: max(concurrency * 2, 8) per level",
+    )
     p.add_argument(
         "--input-len", type=int, default=1024, help="Target input length in tokens"
     )
     p.add_argument(
-        "--output-len", type=int, default=1024, help="Target output length in tokens"
+        "--output-len", type=int, default=512, help="Target output length in tokens"
     )
     p.add_argument(
         "--randomness",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Length randomness: 1.0=fixed, 0.0=uniform [1,target], 0.5=[target/2,target]",
     )
     p.add_argument(
@@ -424,6 +442,11 @@ def main():
 
     random.seed(args.seed)
     concurrencies = [int(x) for x in args.concurrencies.split(",")]
+    pool_size = (
+        args.num_requests
+        if args.num_requests is not None
+        else max(max(concurrencies) * 2, 8)
+    )
 
     # Auto-detect model from server
     model_id = args.model
@@ -445,7 +468,10 @@ def main():
     print(f"  Serving Benchmark")
     print(f"  Server       : {args.base_url}")
     print(f"  Model        : {model_id}")
-    print(f"  Requests     : {args.num_requests}")
+    if args.num_requests is not None:
+        print(f"  Requests     : {args.num_requests} (per concurrency)")
+    else:
+        print(f"  Requests     : max(conc*2, 8) per concurrency")
     print(f"  Input len    : {args.input_len}")
     print(f"  Output len   : {args.output_len}")
     print(f"  Randomness   : {args.randomness}")
@@ -459,14 +485,14 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
     # Load prompts from WildChat
-    prompts = load_wildchat_prompts(args.num_requests)
+    prompts = load_wildchat_prompts(pool_size)
 
     # Prepare requests with controlled lengths
-    print(f"  Preparing {args.num_requests} requests...", flush=True)
+    print(f"  Preparing {pool_size} requests...", flush=True)
     requests_pool = prepare_requests(
         prompts,
         tokenizer,
-        args.num_requests,
+        pool_size,
         args.input_len,
         args.output_len,
         args.randomness,

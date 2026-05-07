@@ -8,14 +8,13 @@ The engine is a "black box" that the scheduler calls into.  It handles:
   4. Decode  (previous token + KV cache → next token + updated KV cache)
   5. Token sampling (delegated to sampler.py)
 
-Design note:
-  The current API is single-request (prefill / decode_step).  A natural
-  first optimisation is to add batched versions that pad sequences and run
-  multiple requests through a single forward pass.
+Two decode paths:
+  - decode_step(req)        : one request, used by baseline scheduler
+  - batched_decode(reqs)    : many requests, one forward pass with padded
+                              KV + attention mask, used by batched mode
 
-  For tensor parallelism, the bare-bone nn.Linear layers in model.py can
-  be sharded directly: Q/K/V/gate/up column-wise, O/down row-wise, with
-  an all-reduce after the row-parallel matmul.
+Prefill stays per-request — variable prompt lengths make batched prefill
+complex, and decode is where the throughput gain lives.
 """
 
 from __future__ import annotations
@@ -34,17 +33,18 @@ logger = logging.getLogger(__name__)
 
 
 class Engine:
-    """Bare-bone model wrapper for single-request prefill and decode."""
+    """Model wrapper supporting baseline (per-request) and batched decode."""
 
     def __init__(
         self,
         model_path: str,
         dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
-        compile_model: bool = False,
+        mode: str = "batched",
     ):
         self.device = device
         self.dtype = dtype
+        self.mode = mode
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
         logger.info("Loading tokenizer from %s …", model_path)
@@ -68,7 +68,10 @@ class Engine:
             config.tie_word_embeddings,
         )
 
-        self.model = CausalLM(config)
+        # Build on meta device — load_weights replaces parameters with
+        # GPU tensors directly, so we never allocate a CPU fp32 copy.
+        with torch.device("meta"):
+            self.model = CausalLM(config)
         load_weights(self.model, model_path, dtype=dtype, device=device)
         self.model.eval()
 
@@ -84,10 +87,6 @@ class Engine:
             tid = self.tokenizer.convert_tokens_to_ids(token_str)
             if tid is not None and tid != self.tokenizer.unk_token_id:
                 self.stop_token_ids.add(tid)
-
-        if compile_model:
-            logger.info("Compiling model with torch.compile …")
-            self.model = torch.compile(self.model)
 
         logger.info(
             "Engine ready  —  vocab=%d, stop_ids=%s, params=%dM",
@@ -184,6 +183,9 @@ class Engine:
         Returns:
             A list of next token ids, one per request.
         """
+        if not requests:
+            return []
+
         num_layers = len(requests[0].kv_cache)
         batch_size = len(requests)
         cache_lens = [req.kv_cache[0][0].shape[2] for req in requests]
@@ -279,7 +281,7 @@ class Engine:
             req.kv_cache = new_kv
 
         return [
-            sample_token(logits[i, -1, :], req.sampling_params, req.output_ids)
+            sample_token(logits[i : i + 1, -1, :], req.sampling_params, req.output_ids)
             for i, req in enumerate(requests)
         ]
 
