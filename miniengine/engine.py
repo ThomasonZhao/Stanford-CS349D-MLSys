@@ -38,13 +38,23 @@ class Engine:
     def __init__(
         self,
         model_path: str,
-        dtype: torch.dtype = torch.bfloat16,
+        dtype: torch.dtype = torch.float16,
         device: str = "cuda",
         mode: str = "batched",
+        mem_fraction_static: float = 0.85,
+        page_size: int = 32,
+        torch_compile: bool = False,
+        cuda_graph: bool = False,
+        cuda_graph_batch_sizes: list[int] | None = None,
     ):
         self.device = device
         self.dtype = dtype
         self.mode = mode
+        self.mem_fraction_static = mem_fraction_static
+        self.page_size = page_size
+        self.torch_compile = torch_compile
+        self.cuda_graph = cuda_graph
+        self.cuda_graph_batch_sizes = cuda_graph_batch_sizes or []
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
         logger.info("Loading tokenizer from %s …", model_path)

@@ -46,9 +46,39 @@ def parse_args() -> argparse.Namespace:
         "--mode",
         type=str,
         default="batched",
-        choices=["baseline", "batched"],
+        choices=["baseline", "batched", "paged"],
         help="Scheduling mode: baseline (one request at a time) or "
-        "batched (iteration-level batching, milestone 1)",
+        "batched (iteration-level batching, milestone 1) or "
+        "paged (paged KV cache pool, milestone 2)",
+    )
+    p.add_argument(
+        "--mem-fraction-static",
+        type=float,
+        default=0.85,
+        help="Fraction of GPU memory to statically allocate for KV caches in paged mode (milestone 2)",
+    )
+    p.add_argument(
+        "--page-size",
+        type=int,
+        default=32,
+        help="Page size for dynamic KV cache pool in paged mode (milestone 2)",
+    )
+    p.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="Enable torch.compile for some components (milestone 2)",
+    )
+    p.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        help="Enable CUDA graph capture for decode step for paged decode (milestone 2 extra credit)",
+    )
+    p.add_argument(
+        "--cuda-graph-batch-sizes",
+        type=int,
+        nargs="+",
+        default=[1, 2, 4, 8, 16, 32],
+        help="Batch sizes to capture CUDA graphs for in paged decode mode (milestone 2 extra credit)",
     )
     return p.parse_args()
 
@@ -65,14 +95,27 @@ def main() -> None:
 
     dtype = getattr(torch, args.dtype)
     logger.info(
-        "Initializing engine  model=%s  dtype=%s  mode=%s",
+        "Initializing engine  model=%s  dtype=%s  mode=%s mem_fraction_static=%.2f page_size=%d torch_compile=%s cuda_graph=%s cuda_graph_batch_sizes=%s",
         args.model,
         args.dtype,
         args.mode,
+        args.mem_fraction_static,
+        args.page_size,
+        args.torch_compile,
+        args.cuda_graph,
+        args.cuda_graph_batch_sizes,
     )
 
     engine = Engine(
-        model_path=args.model, dtype=dtype, device=args.device, mode=args.mode
+        model_path=args.model,
+        dtype=dtype,
+        device=args.device,
+        mode=args.mode,
+        mem_fraction_static=args.mem_fraction_static,
+        page_size=args.page_size,
+        torch_compile=args.torch_compile,
+        cuda_graph=args.cuda_graph,
+        cuda_graph_batch_sizes=args.cuda_graph_batch_sizes,
     )
     sched = Scheduler(engine=engine, max_running=args.max_running, mode=args.mode)
 
