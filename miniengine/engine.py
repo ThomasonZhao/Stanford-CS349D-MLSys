@@ -118,10 +118,42 @@ class Engine:
         self.model.eval()
 
         if torch_compile:
-            logger.info("Enabling torch.compile for static paged decode buckets")
-            self.model.enable_torch_compile()
+            # dynamic=False compile specializes per bucket. Default dynamo
+            # cache_size_limit (8) is below max_running, which silently
+            # forces fallback to eager once the cache fills. Raise the
+            # ceiling so every bucket up to max_running stays compiled.
+            try:
+                import torch._dynamo
+                torch._dynamo.config.cache_size_limit = max(
+                    torch._dynamo.config.cache_size_limit,
+                    max_running * 2 + 8,
+                )
+                torch._dynamo.config.accumulated_cache_size_limit = max(
+                    torch._dynamo.config.accumulated_cache_size_limit,
+                    max_running * 16 + 64,
+                )
+            except Exception:
+                logger.warning("Could not raise dynamo cache_size_limit", exc_info=True)
+            # When there is no manual cuda-graph layer, let inductor wrap
+            # the compiled region with its own cudagraphs to recover launch
+            # overhead. With manual cuda-graph active, keep the inductor
+            # cudagraphs OFF — double-capture corrupts buffers.
+            internal_cudagraphs = not self.cuda_graph
+            logger.info(
+                "Enabling torch.compile for static paged decode buckets  "
+                "internal_cudagraphs=%s",
+                internal_cudagraphs,
+            )
+            self.model.enable_torch_compile(internal_cudagraphs=internal_cudagraphs)
 
         if mode == "paged":
+            if self.cuda_graph:
+                scratch_pages_to_reserve = max_running
+            elif self.torch_compile:
+                # Compile warmup needs one scratch page to seed safe inputs.
+                scratch_pages_to_reserve = 1
+            else:
+                scratch_pages_to_reserve = 0
             bytes_budget = self._compute_kv_budget(mem_fraction_static)
             self.kv_pool = KVMemoryPool.from_budget(
                 num_layers=config.num_hidden_layers,
@@ -131,8 +163,8 @@ class Engine:
                 dtype=dtype,
                 device=device,
                 bytes_budget=bytes_budget,
-                reserve_scratch_page=self.cuda_graph,
-                reserve_scratch_pages=max_running if self.cuda_graph else 0,
+                reserve_scratch_page=scratch_pages_to_reserve > 0,
+                reserve_scratch_pages=scratch_pages_to_reserve,
             )
             logger.info(
                 "Paged KV pool ready  pages=%d  page_size=%d  free=%d  scratch=%s",
@@ -145,6 +177,8 @@ class Engine:
                 capacity=max_running,
                 pages_per_seq=max_decode_pages_per_seq,
             )
+            if self.torch_compile and not self.cuda_graph:
+                self._warmup_compile_buckets()
             if self.cuda_graph:
                 from miniengine.cuda_graph import CudaGraphRunner
 
@@ -374,16 +408,23 @@ class Engine:
         position_ids_cpu = self._dec_position_ids_cpu[:batch_size]
         cache_seqlens_cpu = self._dec_cache_seqlens_cpu[:batch_size]
         block_table_cpu = self._dec_block_table_cpu[:batch_size, :max_pages]
-        block_table_cpu.zero_()
+
+        # numpy() returns a zero-copy view into the pinned host tensor.
+        # Vectorized assignment is much cheaper than per-element tensor
+        # writes (which trigger Python<->C++ dispatch each scalar).
+        input_ids_np = input_ids_cpu.numpy()
+        position_ids_np = position_ids_cpu.numpy()
+        cache_seqlens_np = cache_seqlens_cpu.numpy()
+        block_table_np = block_table_cpu.numpy()
+        block_table_np.fill(0)
 
         for i, req in enumerate(requests):
             cache_len = req.cache_len
-            input_ids_cpu[i, 0] = req.output_ids[-1]
-            position_ids_cpu[i, 0] = cache_len
-            cache_seqlens_cpu[i] = cache_len
-
-            page_tensor = torch.as_tensor(req.page_table, dtype=torch.int32)
-            block_table_cpu[i, : len(req.page_table)].copy_(page_tensor)
+            pt = req.page_table
+            input_ids_np[i, 0] = req.output_ids[-1]
+            position_ids_np[i, 0] = cache_len
+            cache_seqlens_np[i] = cache_len
+            block_table_np[i, : len(pt)] = pt
 
         input_ids = self._dec_input_ids[:batch_size]
         position_ids = self._dec_position_ids[:batch_size]
@@ -396,6 +437,60 @@ class Engine:
         block_table.copy_(block_table_cpu, non_blocking=True)
 
         return block_table, cache_seqlens, input_ids, position_ids
+
+    @torch.inference_mode()
+    def _warmup_compile_buckets(self) -> None:
+        """Trace + compile the paged decode forward at every bucket size.
+
+        Runs decode forwards 1..max_running through the compiled region so
+        dynamo caches one specialization per bucket. Without this, real
+        traffic pays a recompile penalty on every new concurrency level.
+        Inputs are seeded against a reserved scratch page so flash-attn's
+        in-place K/V writes can never corrupt a real request.
+        """
+        pool = self._require_kv_pool()
+        if not pool.scratch_page_indices:
+            raise RuntimeError("compile warmup requires at least one scratch page")
+        if (
+            self._dec_input_ids is None
+            or self._dec_position_ids is None
+            or self._dec_cache_seqlens is None
+            or self._dec_block_table is None
+        ):
+            raise RuntimeError("decode buffers are not initialized for warmup")
+
+        scratch_page = pool.scratch_page_indices[0]
+        max_pages = self._dec_buffer_pages_per_seq
+        for bucket in range(1, self.max_running + 1):
+            self._dec_input_ids[:bucket, 0] = 0
+            self._dec_position_ids[:bucket, 0] = 0
+            self._dec_cache_seqlens[:bucket] = 0
+            self._dec_block_table[:bucket, :max_pages] = scratch_page
+
+            block_table = self._dec_block_table[:bucket, :max_pages]
+            cache_seqlens = self._dec_cache_seqlens[:bucket]
+            input_ids = self._dec_input_ids[:bucket]
+            position_ids = self._dec_position_ids[:bucket]
+            paged_ctx = self._make_paged_context(
+                is_prefill=False,
+                block_table=block_table,
+                cache_seqlens=cache_seqlens,
+                slot_mapping=None,
+            )
+            for _ in range(2):
+                self.model(
+                    input_ids,
+                    position_ids,
+                    kv_caches=None,
+                    paged_ctx=paged_ctx,
+                )
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        logger.info(
+            "compile warmup complete  buckets=1..%d  pages_per_seq=%d",
+            self.max_running,
+            max_pages,
+        )
 
     # ── Forward passes ──────────────────────────────────────────────────
 
