@@ -26,6 +26,19 @@ import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
+try:
+    from flash_attn import flash_attn_varlen_func as _flash_attn_varlen_func
+    from flash_attn import flash_attn_with_kvcache as _flash_attn_with_kvcache
+except Exception:  # pragma: no cover - optional CUDA-only dependency
+    _flash_attn_varlen_func = None
+    _flash_attn_with_kvcache = None
+
+_Attention_flash_decode_logged = [False]
+_Attention_flash_decode_fallback_logged = [False]
+_Attention_flash_prefill_logged = [False]
+_Attention_flash_prefill_fallback_logged = [False]
+_flash_decode_disabled = False
+
 
 # ── Config ──────────────────────────────────────────────────────────────
 
@@ -66,6 +79,23 @@ class ModelConfig:
         )
 
 
+@dataclass
+class PagedContext:
+    """Paged KV state shared by all transformer layers for one forward pass."""
+
+    k_cache_pool: list[torch.Tensor]
+    v_cache_pool: list[torch.Tensor]
+    block_table: torch.Tensor | None
+    cache_seqlens: torch.Tensor | None
+    is_prefill: bool
+
+    cu_seqlens_q: torch.Tensor | None = None
+    cu_seqlens_k: torch.Tensor | None = None
+    max_seqlen_q: int | None = None
+    max_seqlen_k: int | None = None
+    slot_mapping: torch.Tensor | None = None
+
+
 # ── Building blocks ─────────────────────────────────────────────────────
 
 
@@ -89,20 +119,38 @@ class RotaryEmbedding(nn.Module):
     """
     Rotary Position Embedding (RoPE).
 
-    Precomputes and caches cos/sin tables, indexed by position_ids at
-    forward time.  The cache grows on-demand so we never allocate for the
-    full 256K context upfront.
+    Precomputes a bounded cos/sin cache, indexed by position_ids at
+    forward time. The cap avoids allocating the full 256K model context
+    while keeping forward free of CUDA->CPU max-position syncs.
     """
 
-    def __init__(self, head_dim: int, theta: float = 10000.0):
+    def __init__(
+        self,
+        head_dim: int,
+        theta: float = 10000.0,
+        max_positions: int = 16_384,
+    ):
         super().__init__()
+        if max_positions <= 0:
+            raise ValueError("max_positions must be positive")
         self.head_dim = head_dim
         self.theta = theta
+        self.max_positions = max_positions
         inv_freq = 1.0 / (theta ** (torch.arange(0, head_dim, 2).float() / head_dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self._cos: torch.Tensor | None = None
-        self._sin: torch.Tensor | None = None
-        self._cached_len: int = 0
+        self.register_buffer("_cos", torch.empty(0), persistent=False)
+        self.register_buffer("_sin", torch.empty(0), persistent=False)
+        self._build_cache()
+
+    @torch.no_grad()
+    def _build_cache(self) -> None:
+        t = torch.arange(
+            self.max_positions, device=self.inv_freq.device, dtype=self.inv_freq.dtype
+        )
+        freqs = torch.outer(t, self.inv_freq)
+        emb = torch.cat([freqs, freqs], dim=-1)
+        self._cos = emb.cos()
+        self._sin = emb.sin()
 
     @torch.no_grad()
     def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -111,22 +159,10 @@ class RotaryEmbedding(nn.Module):
             position_ids: (batch, seq_len) integer positions.
 
         Returns:
-            cos, sin each of shape (batch, 1, seq_len, head_dim) —
-            broadcastable over the head dimension.
+            cos, sin each of shape (batch, seq_len, 1, head_dim).
+            TransformerModel reshapes these once per forward for the
+            active attention layout.
         """
-        max_pos = int(position_ids.max().item()) + 1
-
-        if self._cos is None or max_pos > self._cached_len:
-            length = max(max_pos, self._cached_len * 2, 256)
-            t = torch.arange(
-                length, device=self.inv_freq.device, dtype=self.inv_freq.dtype
-            )
-            freqs = torch.outer(t, self.inv_freq)  # (length, head_dim/2)
-            emb = torch.cat([freqs, freqs], dim=-1)  # (length, head_dim)
-            self._cos = emb.cos()
-            self._sin = emb.sin()
-            self._cached_len = length
-
         # Index into cache: (batch, seq_len, head_dim) → add head dim
         cos = self._cos[position_ids].unsqueeze(2)  # (batch, seq_len, 1, head_dim)
         sin = self._sin[position_ids].unsqueeze(2)
@@ -145,13 +181,10 @@ def apply_rotary_emb(
     """
     Apply RoPE to x.
 
-    x:   (batch, num_heads, seq_len, head_dim)
-    cos: (batch, seq_len, 1, head_dim)  — broadcast over heads
+    x:   attention tensor in the active layout
+    cos: layout-and-dtype-correct table, broadcastable to x
     sin: same shape as cos
     """
-    # Cast cos/sin to x.dtype — fp32 cos/sin would silently promote q/k.
-    cos = cos.transpose(1, 2).to(x.dtype)
-    sin = sin.transpose(1, 2).to(x.dtype)
     return x * cos + _rotate_half(x) * sin
 
 
@@ -193,6 +226,217 @@ class Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
 
+    def _paged_pre_attn(
+        self, hidden: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Pre-attention dense compute for the paged path: QKV projection,
+        # head reshape, QK-norm, RoPE.
+        bsz, seq_len, _ = hidden.shape
+        q = self.q_proj(hidden).view(bsz, seq_len, self.num_heads, self.head_dim)
+        k = self.k_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+        v = self.v_proj(hidden).view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+        q = self.q_norm(q)
+        k = self.k_norm(k)
+        q = apply_rotary_emb(q, cos, sin)
+        k = apply_rotary_emb(k, cos, sin)
+        return q, k, v
+
+    def _expand_kv_for_gqa(
+        self, k: torch.Tensor, v: torch.Tensor, bsz: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.num_kv_groups <= 1:
+            return k, v
+        k = k[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
+        k = k.reshape(bsz, self.num_heads, -1, self.head_dim)
+        v = v[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
+        v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
+        return k, v
+
+    def _paged_prefill_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        if paged_ctx.slot_mapping is None:
+            raise ValueError("paged prefill requires slot_mapping")
+        if paged_ctx.cu_seqlens_q is None or paged_ctx.cu_seqlens_k is None:
+            raise ValueError("paged prefill requires cu_seqlens")
+        if paged_ctx.max_seqlen_q is None or paged_ctx.max_seqlen_k is None:
+            raise ValueError("paged prefill requires max_seqlen values")
+        if q.shape[0] != 1:
+            raise ValueError("packed paged prefill expects batch size 1")
+
+        k_cache = paged_ctx.k_cache_pool[layer_idx]
+        v_cache = paged_ctx.v_cache_pool[layer_idx]
+        k_packed = k[0].contiguous()
+        v_packed = v[0].contiguous()
+        k_cache.view(-1, self.num_kv_heads, self.head_dim)[
+            paged_ctx.slot_mapping
+        ] = k_packed
+        v_cache.view(-1, self.num_kv_heads, self.head_dim)[
+            paged_ctx.slot_mapping
+        ] = v_packed
+
+        q_packed = q[0].contiguous()
+        if _flash_attn_varlen_func is not None and q_packed.is_cuda:
+            out_packed = _flash_attn_varlen_func(
+                q_packed,
+                k_packed,
+                v_packed,
+                paged_ctx.cu_seqlens_q,
+                paged_ctx.cu_seqlens_k,
+                paged_ctx.max_seqlen_q,
+                paged_ctx.max_seqlen_k,
+                causal=True,
+            )
+            if not _Attention_flash_prefill_logged[0]:
+                _Attention_flash_prefill_logged[0] = True
+                logger.info("paged prefill: flash_attn_varlen_func active")
+            return out_packed.unsqueeze(0)
+
+        q_sdpa = q.transpose(1, 2)
+        k_sdpa = k.transpose(1, 2)
+        v_sdpa = v.transpose(1, 2)
+        k_full, v_full = self._expand_kv_for_gqa(k_sdpa, v_sdpa, bsz=1)
+        total_tokens = q.shape[1]
+        seq_lens = (paged_ctx.cu_seqlens_q[1:] - paged_ctx.cu_seqlens_q[:-1]).to(
+            device=q.device, dtype=torch.long
+        )
+        segment_ids = torch.repeat_interleave(
+            torch.arange(seq_lens.numel(), device=q.device), seq_lens
+        )
+        token_idx = torch.arange(total_tokens, device=q.device)
+        allowed = (segment_ids[:, None] == segment_ids[None, :]) & (
+            token_idx[:, None] >= token_idx[None, :]
+        )
+        attn_mask = torch.full(
+            (total_tokens, total_tokens),
+            float("-inf"),
+            dtype=q.dtype,
+            device=q.device,
+        )
+        attn_mask.masked_fill_(allowed, 0.0)
+        out = F.scaled_dot_product_attention(
+            q_sdpa,
+            k_full,
+            v_full,
+            attn_mask=attn_mask.view(1, 1, total_tokens, total_tokens),
+        )
+        return out.transpose(1, 2).contiguous()
+
+    def _paged_decode_attention_flash(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        # Clean compile- and cuda-graph-friendly flash-attn paged decode.
+        # Caller is responsible for guaranteeing flash-attn is available
+        # and the inputs are CUDA tensors. No try/except, no Python
+        # side-effects — torch.compile graph-breaks at this opaque pybind
+        # call but every other op around it stays fused.
+        return _flash_attn_with_kvcache(
+            q,
+            paged_ctx.k_cache_pool[layer_idx],
+            paged_ctx.v_cache_pool[layer_idx],
+            k=k,
+            v=v,
+            cache_seqlens=paged_ctx.cache_seqlens,
+            block_table=paged_ctx.block_table,
+            causal=True,
+        )
+
+    def _paged_decode_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        if paged_ctx.block_table is None or paged_ctx.cache_seqlens is None:
+            raise ValueError("paged decode requires block_table and cache_seqlens")
+
+        k_cache = paged_ctx.k_cache_pool[layer_idx]
+        v_cache = paged_ctx.v_cache_pool[layer_idx]
+
+        global _flash_decode_disabled
+        if (
+            _flash_attn_with_kvcache is not None
+            and q.is_cuda
+            and not _flash_decode_disabled
+        ):
+            try:
+                out = self._paged_decode_attention_flash(q, k, v, paged_ctx, layer_idx)
+                if not _Attention_flash_decode_logged[0]:
+                    _Attention_flash_decode_logged[0] = True
+                    logger.info("paged decode: flash_attn_with_kvcache active")
+                return out
+            except Exception:
+                _flash_decode_disabled = True
+                if not _Attention_flash_decode_fallback_logged[0]:
+                    _Attention_flash_decode_fallback_logged[0] = True
+                    logger.warning(
+                        "flash-attn paged decode failed; disabling flash decode "
+                        "and using SDPA fallback",
+                        exc_info=True,
+                    )
+
+        bsz, seq_len, _, _ = q.shape
+        if paged_ctx.slot_mapping is not None:
+            slot_mapping = paged_ctx.slot_mapping
+        else:
+            page_size = k_cache.shape[1]
+            cache_pos = paged_ctx.cache_seqlens.to(torch.long)
+            page_offsets = cache_pos // page_size
+            in_page_offsets = cache_pos % page_size
+            page_ids = paged_ctx.block_table.gather(
+                1, page_offsets.view(-1, 1).to(paged_ctx.block_table.device)
+            ).squeeze(1)
+            slot_mapping = page_ids.to(torch.long) * page_size + in_page_offsets
+
+        if seq_len != 1:
+            raise ValueError("paged decode fallback currently expects one token")
+        k_new = k.reshape(-1, self.num_kv_heads, self.head_dim)
+        v_new = v.reshape(-1, self.num_kv_heads, self.head_dim)
+        k_cache.view(-1, self.num_kv_heads, self.head_dim)[slot_mapping] = k_new
+        v_cache.view(-1, self.num_kv_heads, self.head_dim)[slot_mapping] = v_new
+
+        page_size = k_cache.shape[1]
+        kv_lens = paged_ctx.cache_seqlens.to(torch.long) + seq_len
+        max_kv_len = int(kv_lens.max().item())
+        positions = torch.arange(max_kv_len, device=q.device)
+        page_offsets = positions // page_size
+        in_page_offsets = positions % page_size
+        page_ids = paged_ctx.block_table[:, page_offsets].to(torch.long)
+        flat_offsets = page_ids * page_size + in_page_offsets
+
+        flat_k = k_cache.view(-1, self.num_kv_heads, self.head_dim)
+        flat_v = v_cache.view(-1, self.num_kv_heads, self.head_dim)
+        gathered_k = flat_k[flat_offsets].permute(0, 2, 1, 3).contiguous()
+        gathered_v = flat_v[flat_offsets].permute(0, 2, 1, 3).contiguous()
+        valid_positions = positions.view(1, -1) < kv_lens.to(q.device).view(-1, 1)
+        valid_positions = valid_positions.view(bsz, 1, max_kv_len, 1)
+        gathered_k = gathered_k.masked_fill(~valid_positions, 0.0)
+        gathered_v = gathered_v.masked_fill(~valid_positions, 0.0)
+        gathered_k, gathered_v = self._expand_kv_for_gqa(gathered_k, gathered_v, bsz)
+
+        mask_positions = torch.arange(max_kv_len, device=q.device).view(1, 1, 1, -1)
+        valid_lens = kv_lens.to(q.device).view(bsz, 1, 1, 1)
+        attn_mask = torch.zeros(
+            bsz, 1, 1, max_kv_len, dtype=q.dtype, device=q.device
+        )
+        attn_mask.masked_fill_(mask_positions >= valid_lens, float("-inf"))
+        out = F.scaled_dot_product_attention(
+            q.transpose(1, 2), gathered_k, gathered_v, attn_mask=attn_mask
+        )
+        return out.transpose(1, 2).contiguous()
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -200,6 +444,9 @@ class Attention(nn.Module):
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
+        layer_idx: int | None = None,
+        use_compiled_decode: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         """
         Args:
@@ -210,6 +457,9 @@ class Attention(nn.Module):
             attention_mask: optional float mask (batch, 1, q_len, kv_len)
                             for batched decode with padded KV; 0 = attend,
                             -inf = ignore.
+            paged_ctx:     optional paged KV cache context.
+            layer_idx:     transformer layer index when using paged_ctx.
+            use_compiled_decode: handled by TransformerBlock for paged decode.
 
         Returns:
             output:       (batch, seq_len, hidden_size)
@@ -217,30 +467,39 @@ class Attention(nn.Module):
         """
         bsz, seq_len, _ = hidden.shape
 
-        # Project Q, K, V and reshape to (batch, heads, seq_len, head_dim)
-        q = (
-            self.q_proj(hidden)
-            .view(bsz, seq_len, self.num_heads, self.head_dim)
-            .transpose(1, 2)
-        )
-        k = (
-            self.k_proj(hidden)
-            .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
-            .transpose(1, 2)
-        )
-        v = (
-            self.v_proj(hidden)
-            .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
-            .transpose(1, 2)
-        )
+        if paged_ctx is not None:
+            q, k, v = self._paged_pre_attn(hidden, cos, sin)
+        else:
+            # Non-paged SDPA keeps the original (batch, heads, seq, dim) layout.
+            q = (
+                self.q_proj(hidden)
+                .view(bsz, seq_len, self.num_heads, self.head_dim)
+                .transpose(1, 2)
+            )
+            k = (
+                self.k_proj(hidden)
+                .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+                .transpose(1, 2)
+            )
+            v = (
+                self.v_proj(hidden)
+                .view(bsz, seq_len, self.num_kv_heads, self.head_dim)
+                .transpose(1, 2)
+            )
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+            q = apply_rotary_emb(q, cos, sin)
+            k = apply_rotary_emb(k, cos, sin)
 
-        # QK-Norm
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-
-        # RoPE
-        q = apply_rotary_emb(q, cos, sin)
-        k = apply_rotary_emb(k, cos, sin)
+        if paged_ctx is not None:
+            if layer_idx is None:
+                raise ValueError("layer_idx is required for paged attention")
+            if paged_ctx.is_prefill:
+                out = self._paged_prefill_attention(q, k, v, paged_ctx, layer_idx)
+            else:
+                out = self._paged_decode_attention(q, k, v, paged_ctx, layer_idx)
+            out = out.reshape(bsz, seq_len, self.num_heads * self.head_dim)
+            return self.o_proj(out), (k, v)
 
         # Append to KV cache
         if kv_cache is not None:
@@ -249,11 +508,7 @@ class Attention(nn.Module):
         new_kv = (k, v)
 
         # GQA: expand KV heads to match Q heads
-        if self.num_kv_groups > 1:
-            k = k[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            k = k.reshape(bsz, self.num_heads, -1, self.head_dim)
-            v = v[:, :, None, :, :].expand(-1, -1, self.num_kv_groups, -1, -1)
-            v = v.reshape(bsz, self.num_heads, -1, self.head_dim)
+        k, v = self._expand_kv_for_gqa(k, v, bsz)
 
         # Batched decode passes an explicit float mask; otherwise fall
         # back to the is_causal kernel path.
@@ -300,9 +555,67 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.self_attn = Attention(config)
         self.mlp = MLP(config)
+        self._compiled_paged_decode = None
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
+        )
+
+    def _paged_decode_block(
+        self,
+        hidden: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        paged_ctx: PagedContext,
+        layer_idx: int,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        residual = hidden
+        hidden = self.input_layernorm(hidden)
+        q, k, v = self.self_attn._paged_pre_attn(hidden, cos, sin)
+        # Compile- and graph-friendly attention path: avoids the try/except
+        # and global-mutation graph breaks that gate eager safety.
+        attn_out = self.self_attn._paged_decode_attention_flash(
+            q,
+            k,
+            v,
+            paged_ctx,
+            layer_idx,
+        )
+        bsz, seq_len, _, _ = q.shape
+        attn_out = attn_out.reshape(
+            bsz,
+            seq_len,
+            self.self_attn.num_heads * self.self_attn.head_dim,
+        )
+        hidden = residual + self.self_attn.o_proj(attn_out)
+
+        residual = hidden
+        hidden = self.post_attention_layernorm(hidden)
+        hidden = self.mlp(hidden)
+        hidden = residual + hidden
+        return hidden, (k, v)
+
+    def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
+        # Compile the whole paged decode block at static bucket shapes. This
+        # keeps attention, output projection, and MLP in one compiled region
+        # and avoids the many small dynamic subfunction calls.
+        #
+        # internal_cudagraphs is intentionally a no-op for now: chaining 36
+        # separately-compiled layer regions trips inductor's cudagraph_trees
+        # alias guard (the residual buffer of layer N is reused by layer
+        # N+1's capture). Capture must happen at a coarser granularity to
+        # use mode="reduce-overhead" cleanly.
+        #
+        # mode="max-autotune" + triton.cudagraphs=False asks inductor to
+        # autotune triton kernel configs for each generated kernel — useful
+        # for batch=1 decode where cuBLAS GEMV may not be optimal and a
+        # tile-tuned triton kernel can beat it. cudagraphs=False keeps the
+        # manual cuda-graph layer above us in charge.
+        del internal_cudagraphs
+        self._compiled_paged_decode = torch.compile(
+            self._paged_decode_block,
+            dynamic=False,
+            mode="max-autotune-no-cudagraphs",
         )
 
     def forward(
@@ -312,10 +625,32 @@ class TransformerBlock(nn.Module):
         sin: torch.Tensor,
         kv_cache: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
+        layer_idx: int | None = None,
+        use_compiled_decode: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        if (
+            use_compiled_decode
+            and self._compiled_paged_decode is not None
+            and paged_ctx is not None
+            and not paged_ctx.is_prefill
+        ):
+            if layer_idx is None:
+                raise ValueError("layer_idx is required for paged decode")
+            return self._compiled_paged_decode(hidden, cos, sin, paged_ctx, layer_idx)
+
         residual = hidden
         hidden = self.input_layernorm(hidden)
-        hidden, new_kv = self.self_attn(hidden, cos, sin, kv_cache, attention_mask)
+        hidden, new_kv = self.self_attn(
+            hidden,
+            cos,
+            sin,
+            kv_cache,
+            attention_mask,
+            paged_ctx,
+            layer_idx,
+            use_compiled_decode=use_compiled_decode,
+        )
         hidden = residual + hidden
 
         residual = hidden
@@ -339,7 +674,18 @@ class TransformerModel(nn.Module):
             [TransformerBlock(config) for _ in range(config.num_hidden_layers)]
         )
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = RotaryEmbedding(config.head_dim, theta=config.rope_theta)
+        rope_cap = min(config.max_position_embeddings, 16_384)
+        self.rotary_emb = RotaryEmbedding(
+            config.head_dim,
+            theta=config.rope_theta,
+            max_positions=rope_cap,
+        )
+        self.use_torch_compile = False
+
+    def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
+        for layer in self.layers:
+            layer.enable_torch_compile(internal_cudagraphs=internal_cudagraphs)
+        self.use_torch_compile = True
 
     def forward(
         self,
@@ -347,6 +693,7 @@ class TransformerModel(nn.Module):
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Args:
@@ -354,6 +701,7 @@ class TransformerModel(nn.Module):
             position_ids:   (batch, seq_len)
             kv_caches:      list of per-layer (key, value) caches, or None
             attention_mask: optional float mask for batched-decode SDPA
+            paged_ctx:      optional paged KV cache context
 
         Returns:
             hidden:         (batch, seq_len, hidden_size)
@@ -361,11 +709,31 @@ class TransformerModel(nn.Module):
         """
         hidden = self.embed_tokens(input_ids)
         cos, sin = self.rotary_emb(position_ids)
+        if paged_ctx is not None:
+            cos = cos.to(dtype=hidden.dtype)
+            sin = sin.to(dtype=hidden.dtype)
+        else:
+            cos = cos.transpose(1, 2).to(dtype=hidden.dtype)
+            sin = sin.transpose(1, 2).to(dtype=hidden.dtype)
+        use_compiled_decode = (
+            self.use_torch_compile
+            and paged_ctx is not None
+            and not paged_ctx.is_prefill
+        )
 
         new_kv_caches: list[tuple[torch.Tensor, torch.Tensor]] = []
         for i, layer in enumerate(self.layers):
             kv = kv_caches[i] if kv_caches is not None else None
-            hidden, new_kv = layer(hidden, cos, sin, kv, attention_mask)
+            hidden, new_kv = layer(
+                hidden,
+                cos,
+                sin,
+                kv,
+                attention_mask,
+                paged_ctx=paged_ctx,
+                layer_idx=i,
+                use_compiled_decode=use_compiled_decode,
+            )
             new_kv_caches.append(new_kv)
 
         hidden = self.norm(hidden)
@@ -383,8 +751,29 @@ class CausalLM(nn.Module):
         super().__init__()
         self.config = config
         self.model = TransformerModel(config)
+        self._compiled_logits = None
         if not config.tie_word_embeddings:
             self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+    def _project_logits(self, hidden: torch.Tensor) -> torch.Tensor:
+        if self.config.tie_word_embeddings:
+            return F.linear(hidden, self.model.embed_tokens.weight)
+        return self.lm_head(hidden)
+
+    def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
+        # internal_cudagraphs flag is preserved for API compatibility but
+        # currently always disabled: a whole-forward reduce-overhead
+        # compile tripped an inductor functionalization bug, and per-layer
+        # reduce-overhead chains trip cudagraph_trees aliasing. Per-layer
+        # kernel-fusion compile is what ships, with max-autotune for the
+        # small-batch decode GEMMs.
+        del internal_cudagraphs
+        self.model.enable_torch_compile(internal_cudagraphs=False)
+        self._compiled_logits = torch.compile(
+            self._project_logits,
+            dynamic=False,
+            mode="max-autotune-no-cudagraphs",
+        )
 
     def forward(
         self,
@@ -392,19 +781,29 @@ class CausalLM(nn.Module):
         position_ids: torch.Tensor,
         kv_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         attention_mask: torch.Tensor | None = None,
+        paged_ctx: PagedContext | None = None,
+        logit_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Returns:
-            logits:        (batch, seq_len, vocab_size)
+            logits:        (batch, selected_or_full_seq_len, vocab_size)
             new_kv_caches: per-layer KV caches
         """
         hidden, new_kv_caches = self.model(
-            input_ids, position_ids, kv_caches, attention_mask
+            input_ids, position_ids, kv_caches, attention_mask, paged_ctx
         )
-        if self.config.tie_word_embeddings:
-            logits = F.linear(hidden, self.model.embed_tokens.weight)
+        if logit_positions is not None:
+            positions = logit_positions.to(device=hidden.device, dtype=torch.long)
+            hidden = hidden.index_select(1, positions)
+        if (
+            self._compiled_logits is not None
+            and paged_ctx is not None
+            and not paged_ctx.is_prefill
+            and logit_positions is None
+        ):
+            logits = self._compiled_logits(hidden)
         else:
-            logits = self.lm_head(hidden)
+            logits = self._project_logits(hidden)
         return logits, new_kv_caches
 
 
@@ -484,6 +883,7 @@ def load_weights(
                     / module.head_dim
                 )
             )
+            module._build_cache()
     logger.info(
         "Weights loaded — %d parameters on %s (%s)",
         sum(p.numel() for p in model.parameters()),

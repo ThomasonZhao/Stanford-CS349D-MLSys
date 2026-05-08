@@ -72,3 +72,31 @@ def sample_token(
 
     probs = torch.softmax(logits, dim=-1)
     return torch.multinomial(probs, num_samples=1).item()
+
+
+def sample_tokens_batched(
+    logits: torch.Tensor,
+    params: list[SamplingParams],
+    output_ids: list[list[int]],
+) -> list[int]:
+    """
+    Sample one token per row.
+
+    The common serving benchmark path is homogeneous greedy decoding.
+    Use one batched argmax there, and fall back to the single-request
+    sampler for any request needing penalty or stochastic handling.
+    """
+    if logits.shape[0] != len(params) or len(params) != len(output_ids):
+        raise ValueError("batched sampling inputs must have matching batch size")
+
+    if all(
+        param.temperature == 0
+        and (param.repetition_penalty == 1.0 or not previous_ids)
+        for param, previous_ids in zip(params, output_ids)
+    ):
+        return logits.argmax(dim=-1).tolist()
+
+    return [
+        sample_token(logits[i : i + 1], param, previous_ids)
+        for i, (param, previous_ids) in enumerate(zip(params, output_ids))
+    ]

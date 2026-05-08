@@ -27,8 +27,10 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 
 from miniengine.core import Request
-from miniengine.model import CausalLM, ModelConfig, load_weights
-from miniengine.sampler import sample_token
+from miniengine import model as model_module
+from miniengine.kv_memory_pool import KVMemoryPool
+from miniengine.model import CausalLM, ModelConfig, PagedContext, load_weights
+from miniengine.sampler import sample_token, sample_tokens_batched
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +44,49 @@ class Engine:
         dtype: torch.dtype = torch.bfloat16,
         device: str = "cuda",
         mode: str = "batched",
+        page_size: int = 32,
+        mem_fraction_static: float = 0.85,
+        torch_compile: bool = False,
+        max_running: int = 16,
+        max_decode_pages_per_seq: int = 64,
+        cuda_graph: bool = False,
+        cuda_graph_batch_sizes: list[int] | None = None,
     ):
         self.device = device
         self.dtype = dtype
         self.mode = mode
+        self.page_size = page_size
+        self.mem_fraction_static = mem_fraction_static
+        self.torch_compile = torch_compile
+        self.max_running = max_running
+        self.max_decode_pages_per_seq = max_decode_pages_per_seq
+        if cuda_graph:
+            self._validate_cuda_graph_config(
+                mode=mode,
+                device=device,
+                page_size=page_size,
+            )
+        self.cuda_graph = cuda_graph
+        self.cuda_graph_batch_sizes = (
+            self._cuda_graph_exact_batch_sizes(max_running) if cuda_graph else []
+        )
+        if cuda_graph_batch_sizes:
+            logger.info(
+                "Ignoring --cuda-graph-batch-sizes; capturing exact buckets 1..%d",
+                max_running,
+            )
+        self.kv_pool: KVMemoryPool | None = None
+        self.cuda_graph_runner = None
+        self._dec_buffer_capacity = 0
+        self._dec_buffer_pages_per_seq = 0
+        self._dec_input_ids: torch.Tensor | None = None
+        self._dec_position_ids: torch.Tensor | None = None
+        self._dec_cache_seqlens: torch.Tensor | None = None
+        self._dec_block_table: torch.Tensor | None = None
+        self._dec_input_ids_cpu: torch.Tensor | None = None
+        self._dec_position_ids_cpu: torch.Tensor | None = None
+        self._dec_cache_seqlens_cpu: torch.Tensor | None = None
+        self._dec_block_table_cpu: torch.Tensor | None = None
 
         # ── Tokenizer (still from HF — it's just a tokenizer) ──────────
         logger.info("Loading tokenizer from %s …", model_path)
@@ -76,6 +117,91 @@ class Engine:
         load_weights(self.model, model_path, dtype=dtype, device=device)
         self.model.eval()
 
+        if torch_compile:
+            # dynamic=False compile specializes per bucket. Default dynamo
+            # cache_size_limit (8) is below max_running, which silently
+            # forces fallback to eager once the cache fills. Raise the
+            # ceiling so every bucket up to max_running stays compiled.
+            try:
+                # Aliased import: `import torch._dynamo` would rebind `torch`
+                # as a local for the whole function (Python scoping), masking
+                # earlier uses of `torch.device(...)`.
+                import torch._dynamo as _dynamo
+                # `_paged_decode_block` is a method on TransformerBlock —
+                # all 36 layer instances share one dynamo cache. With
+                # dynamic=False per-bucket compile, each (layer instance,
+                # bucket) pair is a separate specialization, so the cache
+                # needs at least num_layers * max_running entries.
+                target_cache = max(
+                    _dynamo.config.cache_size_limit,
+                    config.num_hidden_layers * max_running + 64,
+                )
+                _dynamo.config.cache_size_limit = target_cache
+                _dynamo.config.accumulated_cache_size_limit = max(
+                    _dynamo.config.accumulated_cache_size_limit,
+                    target_cache * 4,
+                )
+            except Exception:
+                logger.warning("Could not raise dynamo cache_size_limit", exc_info=True)
+            # When there is no manual cuda-graph layer, let inductor wrap
+            # the compiled region with its own cudagraphs to recover launch
+            # overhead. With manual cuda-graph active, keep the inductor
+            # cudagraphs OFF — double-capture corrupts buffers.
+            internal_cudagraphs = not self.cuda_graph
+            logger.info(
+                "Enabling torch.compile for static paged decode buckets  "
+                "internal_cudagraphs=%s",
+                internal_cudagraphs,
+            )
+            self.model.enable_torch_compile(internal_cudagraphs=internal_cudagraphs)
+
+        if mode == "paged":
+            if self.cuda_graph:
+                scratch_pages_to_reserve = max_running
+            elif self.torch_compile:
+                # Compile warmup needs one scratch page to seed safe inputs.
+                scratch_pages_to_reserve = 1
+            else:
+                scratch_pages_to_reserve = 0
+            bytes_budget = self._compute_kv_budget(mem_fraction_static)
+            self.kv_pool = KVMemoryPool.from_budget(
+                num_layers=config.num_hidden_layers,
+                num_kv_heads=config.num_key_value_heads,
+                head_dim=config.head_dim,
+                page_size=page_size,
+                dtype=dtype,
+                device=device,
+                bytes_budget=bytes_budget,
+                reserve_scratch_page=scratch_pages_to_reserve > 0,
+                reserve_scratch_pages=scratch_pages_to_reserve,
+            )
+            logger.info(
+                "Paged KV pool ready  pages=%d  page_size=%d  free=%d  scratch=%s",
+                self.kv_pool.num_pages,
+                self.kv_pool.page_size,
+                self.kv_pool.num_free,
+                self.kv_pool.scratch_page_indices,
+            )
+            self._allocate_decode_buffers(
+                capacity=max_running,
+                pages_per_seq=max_decode_pages_per_seq,
+            )
+            if self.torch_compile and not self.cuda_graph:
+                self._warmup_compile_buckets()
+            if self.cuda_graph:
+                from miniengine.cuda_graph import CudaGraphRunner
+
+                self.cuda_graph_runner = CudaGraphRunner(
+                    engine=self,
+                    bucket_sizes=self.cuda_graph_batch_sizes,
+                    max_pages_per_seq=max_decode_pages_per_seq,
+                )
+                self.cuda_graph_runner.capture()
+                logger.info(
+                    "CUDA graph runner ready  buckets=%s",
+                    self.cuda_graph_runner.bucket_sizes,
+                )
+
         # ── Stop tokens ─────────────────────────────────────────────────
         self.stop_token_ids: set[int] = set()
         if self.tokenizer.eos_token_id is not None:
@@ -95,6 +221,53 @@ class Engine:
             self.stop_token_ids,
             sum(p.numel() for p in self.model.parameters()) // 1_000_000,
         )
+
+    @staticmethod
+    def _cuda_graph_exact_batch_sizes(max_running: int) -> list[int]:
+        if max_running <= 0:
+            raise ValueError("max_running must be positive when using CUDA graph")
+        return list(range(1, max_running + 1))
+
+    @staticmethod
+    def _validate_cuda_graph_config(
+        *, mode: str, device: str, page_size: int
+    ) -> None:
+        if mode != "paged":
+            raise ValueError("CUDA graph requires paged mode")
+        if page_size <= 0:
+            raise ValueError("CUDA graph requires a positive page_size")
+        device_obj = torch.device(device)
+        if device_obj.type != "cuda" or not torch.cuda.is_available():
+            raise RuntimeError("CUDA graph requires an available CUDA device")
+        if model_module._flash_attn_with_kvcache is None:
+            raise RuntimeError("CUDA graph requires flash-attn paged decode")
+        if page_size % 256 != 0:
+            raise ValueError("CUDA graph requires page_size divisible by 256")
+
+    def _compute_kv_budget(self, mem_fraction_static: float) -> int:
+        if not 0 < mem_fraction_static <= 1:
+            raise ValueError("mem_fraction_static must be in (0, 1]")
+
+        model_param_bytes = sum(
+            p.numel() * p.element_size() for p in self.model.parameters()
+        )
+        device = torch.device(self.device)
+        if device.type == "cuda" and torch.cuda.is_available():
+            total_mem = torch.cuda.get_device_properties(device).total_memory
+            safety_margin = 512 * 1024 * 1024
+        else:
+            total_mem = model_param_bytes + 512 * 1024 * 1024
+            safety_margin = 64 * 1024 * 1024
+
+        static_budget = int(mem_fraction_static * total_mem)
+        kv_budget = static_budget - model_param_bytes - safety_margin
+        if kv_budget <= 0:
+            raise RuntimeError(
+                "Not enough static memory budget for paged KV cache "
+                f"(static_budget={static_budget}, model_params={model_param_bytes}, "
+                f"safety_margin={safety_margin})"
+            )
+        return kv_budget
 
     # ── Tokenization ────────────────────────────────────────────────────
 
@@ -117,6 +290,217 @@ class Engine:
         """Decode a single token id back to a string."""
         return self.tokenizer.decode([token_id], skip_special_tokens=True)
 
+    def _require_kv_pool(self) -> KVMemoryPool:
+        if self.kv_pool is None:
+            raise RuntimeError("paged KV pool is not initialized")
+        return self.kv_pool
+
+    def _make_paged_context(
+        self,
+        *,
+        is_prefill: bool,
+        block_table: torch.Tensor | None,
+        cache_seqlens: torch.Tensor | None,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seqlen: int | None = None,
+        slot_mapping: torch.Tensor | None = None,
+    ) -> PagedContext:
+        pool = self._require_kv_pool()
+        return PagedContext(
+            k_cache_pool=pool.k_caches,
+            v_cache_pool=pool.v_caches,
+            block_table=block_table,
+            cache_seqlens=cache_seqlens,
+            is_prefill=is_prefill,
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_k=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_k=max_seqlen,
+            slot_mapping=slot_mapping,
+        )
+
+    def _validate_rope_budget(self, request: Request) -> None:
+        rotary = self.model.model.rotary_emb
+        requested_tokens = (
+            request.num_input_tokens + request.sampling_params.max_new_tokens
+        )
+        if requested_tokens > rotary.max_positions:
+            raise ValueError(
+                "request length exceeds RoPE cache cap "
+                f"(prompt={request.num_input_tokens}, "
+                f"max_new_tokens={request.sampling_params.max_new_tokens}, "
+                f"cap={rotary.max_positions})"
+            )
+
+    def _cpu_staging_empty(
+        self, shape: tuple[int, ...], dtype: torch.dtype
+    ) -> torch.Tensor:
+        device = torch.device(self.device)
+        pin_memory = device.type == "cuda" and torch.cuda.is_available()
+        return torch.empty(shape, dtype=dtype, device="cpu", pin_memory=pin_memory)
+
+    def _allocate_decode_buffers(self, capacity: int, pages_per_seq: int) -> None:
+        capacity = max(1, capacity)
+        pages_per_seq = max(1, pages_per_seq)
+        device = torch.device(self.device)
+
+        self._dec_buffer_capacity = capacity
+        self._dec_buffer_pages_per_seq = pages_per_seq
+        self._dec_input_ids = torch.empty(
+            (capacity, 1), dtype=torch.long, device=device
+        )
+        self._dec_position_ids = torch.empty(
+            (capacity, 1), dtype=torch.long, device=device
+        )
+        self._dec_cache_seqlens = torch.empty(
+            (capacity,), dtype=torch.int32, device=device
+        )
+        self._dec_block_table = torch.empty(
+            (capacity, pages_per_seq), dtype=torch.int32, device=device
+        )
+
+        self._dec_input_ids_cpu = self._cpu_staging_empty((capacity, 1), torch.long)
+        self._dec_position_ids_cpu = self._cpu_staging_empty(
+            (capacity, 1), torch.long
+        )
+        self._dec_cache_seqlens_cpu = self._cpu_staging_empty(
+            (capacity,), torch.int32
+        )
+        self._dec_block_table_cpu = self._cpu_staging_empty(
+            (capacity, pages_per_seq), torch.int32
+        )
+
+    def _ensure_decode_buffers(self, batch_size: int, pages_per_seq: int) -> None:
+        if (
+            self._dec_input_ids is not None
+            and batch_size <= self._dec_buffer_capacity
+            and pages_per_seq <= self._dec_buffer_pages_per_seq
+        ):
+            return
+
+        if getattr(self, "cuda_graph_runner", None) is not None:
+            raise RuntimeError(
+                "decode buffers cannot grow after CUDA graph capture "
+                f"(requested batch={batch_size}, pages_per_seq={pages_per_seq}; "
+                f"capacity batch={self._dec_buffer_capacity}, "
+                f"pages_per_seq={self._dec_buffer_pages_per_seq})"
+            )
+
+        capacity = max(batch_size, self._dec_buffer_capacity, self.max_running)
+        page_capacity = max(
+            pages_per_seq,
+            self._dec_buffer_pages_per_seq,
+            self.max_decode_pages_per_seq,
+        )
+        self._allocate_decode_buffers(capacity=capacity, pages_per_seq=page_capacity)
+
+    def _prepare_paged_decode_inputs(
+        self, requests: list[Request]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size = len(requests)
+        max_pages = max(len(req.page_table) for req in requests)
+        self._ensure_decode_buffers(batch_size=batch_size, pages_per_seq=max_pages)
+
+        if (
+            self._dec_input_ids is None
+            or self._dec_position_ids is None
+            or self._dec_cache_seqlens is None
+            or self._dec_block_table is None
+            or self._dec_input_ids_cpu is None
+            or self._dec_position_ids_cpu is None
+            or self._dec_cache_seqlens_cpu is None
+            or self._dec_block_table_cpu is None
+        ):
+            raise RuntimeError("paged decode buffers are not initialized")
+
+        input_ids_cpu = self._dec_input_ids_cpu[:batch_size]
+        position_ids_cpu = self._dec_position_ids_cpu[:batch_size]
+        cache_seqlens_cpu = self._dec_cache_seqlens_cpu[:batch_size]
+        block_table_cpu = self._dec_block_table_cpu[:batch_size, :max_pages]
+
+        # numpy() returns a zero-copy view into the pinned host tensor.
+        # Vectorized assignment is much cheaper than per-element tensor
+        # writes (which trigger Python<->C++ dispatch each scalar).
+        input_ids_np = input_ids_cpu.numpy()
+        position_ids_np = position_ids_cpu.numpy()
+        cache_seqlens_np = cache_seqlens_cpu.numpy()
+        block_table_np = block_table_cpu.numpy()
+        block_table_np.fill(0)
+
+        for i, req in enumerate(requests):
+            cache_len = req.cache_len
+            pt = req.page_table
+            input_ids_np[i, 0] = req.output_ids[-1]
+            position_ids_np[i, 0] = cache_len
+            cache_seqlens_np[i] = cache_len
+            block_table_np[i, : len(pt)] = pt
+
+        input_ids = self._dec_input_ids[:batch_size]
+        position_ids = self._dec_position_ids[:batch_size]
+        cache_seqlens = self._dec_cache_seqlens[:batch_size]
+        block_table = self._dec_block_table[:batch_size, :max_pages]
+
+        input_ids.copy_(input_ids_cpu, non_blocking=True)
+        position_ids.copy_(position_ids_cpu, non_blocking=True)
+        cache_seqlens.copy_(cache_seqlens_cpu, non_blocking=True)
+        block_table.copy_(block_table_cpu, non_blocking=True)
+
+        return block_table, cache_seqlens, input_ids, position_ids
+
+    @torch.inference_mode()
+    def _warmup_compile_buckets(self) -> None:
+        """Trace + compile the paged decode forward at every bucket size.
+
+        Runs decode forwards 1..max_running through the compiled region so
+        dynamo caches one specialization per bucket. Without this, real
+        traffic pays a recompile penalty on every new concurrency level.
+        Inputs are seeded against a reserved scratch page so flash-attn's
+        in-place K/V writes can never corrupt a real request.
+        """
+        pool = self._require_kv_pool()
+        if not pool.scratch_page_indices:
+            raise RuntimeError("compile warmup requires at least one scratch page")
+        if (
+            self._dec_input_ids is None
+            or self._dec_position_ids is None
+            or self._dec_cache_seqlens is None
+            or self._dec_block_table is None
+        ):
+            raise RuntimeError("decode buffers are not initialized for warmup")
+
+        scratch_page = pool.scratch_page_indices[0]
+        max_pages = self._dec_buffer_pages_per_seq
+        for bucket in range(1, self.max_running + 1):
+            self._dec_input_ids[:bucket, 0] = 0
+            self._dec_position_ids[:bucket, 0] = 0
+            self._dec_cache_seqlens[:bucket] = 0
+            self._dec_block_table[:bucket, :max_pages] = scratch_page
+
+            block_table = self._dec_block_table[:bucket, :max_pages]
+            cache_seqlens = self._dec_cache_seqlens[:bucket]
+            input_ids = self._dec_input_ids[:bucket]
+            position_ids = self._dec_position_ids[:bucket]
+            paged_ctx = self._make_paged_context(
+                is_prefill=False,
+                block_table=block_table,
+                cache_seqlens=cache_seqlens,
+                slot_mapping=None,
+            )
+            for _ in range(2):
+                self.model(
+                    input_ids,
+                    position_ids,
+                    kv_caches=None,
+                    paged_ctx=paged_ctx,
+                )
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        logger.info(
+            "compile warmup complete  buckets=1..%d  pages_per_seq=%d",
+            self.max_running,
+            max_pages,
+        )
+
     # ── Forward passes ──────────────────────────────────────────────────
 
     @torch.inference_mode()
@@ -131,6 +515,7 @@ class Engine:
         Returns:
             The first generated token id.
         """
+        self._validate_rope_budget(request)
         input_ids = torch.tensor(
             [request.input_ids], dtype=torch.long, device=self.device
         )
@@ -171,6 +556,168 @@ class Engine:
         return sample_token(
             logits[:, -1, :], request.sampling_params, request.output_ids
         )
+
+    @torch.inference_mode()
+    def paged_prefill(self, requests: list[Request]) -> list[int]:
+        """
+        Packed prefill for paged mode.
+
+        Prompts are flattened into one sequence with per-request RoPE
+        positions and block-diagonal causal attention. Fresh K/V values
+        are written directly into each request's allocated pool pages.
+        """
+        if not requests:
+            return []
+
+        pool = self._require_kv_pool()
+        prompt_lens = [req.num_input_tokens for req in requests]
+        if any(length <= 0 for length in prompt_lens):
+            raise ValueError("paged prefill requires non-empty prompts")
+        for req in requests:
+            self._validate_rope_budget(req)
+
+        page_counts = [pool.pages_needed(length) for length in prompt_lens]
+        total_pages = sum(page_counts)
+        if total_pages > pool.num_free:
+            raise RuntimeError(
+                f"KV pool OOM during prefill: need {total_pages} pages, "
+                f"have {pool.num_free} free"
+            )
+
+        allocated: list[list[int]] = []
+        try:
+            for req, num_pages in zip(requests, page_counts):
+                req.page_table = pool.allocate(num_pages)
+                allocated.append(req.page_table)
+
+            flat_ids: list[int] = []
+            flat_positions: list[int] = []
+            slot_mapping: list[int] = []
+            cu_values = [0]
+            for req in requests:
+                flat_ids.extend(req.input_ids)
+                flat_positions.extend(range(req.num_input_tokens))
+                for pos in range(req.num_input_tokens):
+                    page_idx = req.page_table[pos // pool.page_size]
+                    slot_mapping.append(
+                        page_idx * pool.page_size + pos % pool.page_size
+                    )
+                cu_values.append(cu_values[-1] + req.num_input_tokens)
+
+            input_ids = torch.tensor(
+                [flat_ids], dtype=torch.long, device=self.device
+            )
+            position_ids = torch.tensor(
+                [flat_positions], dtype=torch.long, device=self.device
+            )
+            cu_seqlens = torch.tensor(
+                cu_values, dtype=torch.int32, device=self.device
+            )
+            slot_mapping_tensor = torch.tensor(
+                slot_mapping, dtype=torch.long, device=self.device
+            )
+            logit_positions = cu_seqlens[1:].to(dtype=torch.long) - 1
+            paged_ctx = self._make_paged_context(
+                is_prefill=True,
+                block_table=None,
+                cache_seqlens=None,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max(prompt_lens),
+                slot_mapping=slot_mapping_tensor,
+            )
+
+            logits, _ = self.model(
+                input_ids,
+                position_ids,
+                kv_caches=None,
+                paged_ctx=paged_ctx,
+                logit_positions=logit_positions,
+            )
+
+            for i, req in enumerate(requests):
+                req.cache_len = req.num_input_tokens
+            token_ids = sample_tokens_batched(
+                logits[0],
+                [req.sampling_params for req in requests],
+                [req.output_ids for req in requests],
+            )
+            return token_ids
+        except Exception:
+            for pages in allocated:
+                if pages:
+                    pool.free(pages)
+            for req in requests:
+                req.page_table = []
+                req.cache_len = 0
+            raise
+
+    @torch.inference_mode()
+    def paged_decode(self, requests: list[Request]) -> list[int]:
+        """Decode one token per request using the paged KV cache."""
+        if not requests:
+            return []
+
+        pool = self._require_kv_pool()
+        grow_requests = [
+            req for req in requests if req.cache_len % pool.page_size == 0
+        ]
+        if len(grow_requests) > pool.num_free:
+            raise RuntimeError(
+                f"KV pool OOM during decode: need {len(grow_requests)} pages, "
+                f"have {pool.num_free} free"
+            )
+
+        grown_pages: list[tuple[Request, int]] = []
+        try:
+            for req in grow_requests:
+                page = pool.allocate(1)[0]
+                req.page_table.append(page)
+                grown_pages.append((req, page))
+
+            max_pages = max(len(req.page_table) for req in requests)
+            (
+                block_table,
+                cache_seqlens,
+                input_ids,
+                position_ids,
+            ) = self._prepare_paged_decode_inputs(requests)
+
+            if (
+                self.cuda_graph_runner is not None
+                and self.cuda_graph_runner.can_replay(
+                    len(requests),
+                    max_pages,
+                )
+            ):
+                logits = self.cuda_graph_runner.replay(len(requests), max_pages)
+            else:
+                paged_ctx = self._make_paged_context(
+                    is_prefill=False,
+                    block_table=block_table,
+                    cache_seqlens=cache_seqlens,
+                    slot_mapping=None,
+                )
+                logits, _ = self.model(
+                    input_ids,
+                    position_ids,
+                    kv_caches=None,
+                    paged_ctx=paged_ctx,
+                )
+
+            token_ids = sample_tokens_batched(
+                logits[:, -1, :],
+                [req.sampling_params for req in requests],
+                [req.output_ids for req in requests],
+            )
+            for req in requests:
+                req.cache_len += 1
+            return token_ids
+        except Exception:
+            for req, page in reversed(grown_pages):
+                if req.page_table and req.page_table[-1] == page:
+                    req.page_table.pop()
+                pool.free([page])
+            raise
 
     def is_stop_token(self, token_id: int) -> bool:
         return token_id in self.stop_token_ids

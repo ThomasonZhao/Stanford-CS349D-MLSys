@@ -57,6 +57,10 @@ class Request:
     # Per-request KV cache (set by Engine during prefill, updated on each decode)
     kv_cache: Any = None
 
+    # Paged KV cache metadata (used only by the paged engine path)
+    page_table: list[int] = field(default_factory=list)
+    cache_len: int = 0
+
     # Streaming output channel — scheduler pushes, server consumes
     token_queue: queue.Queue = field(default_factory=queue.Queue)
 
