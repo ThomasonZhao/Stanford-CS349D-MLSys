@@ -605,11 +605,17 @@ class TransformerBlock(nn.Module):
         # alias guard (the residual buffer of layer N is reused by layer
         # N+1's capture). Capture must happen at a coarser granularity to
         # use mode="reduce-overhead" cleanly.
+        #
+        # mode="max-autotune" + triton.cudagraphs=False asks inductor to
+        # autotune triton kernel configs for each generated kernel — useful
+        # for batch=1 decode where cuBLAS GEMV may not be optimal and a
+        # tile-tuned triton kernel can beat it. cudagraphs=False keeps the
+        # manual cuda-graph layer above us in charge.
         del internal_cudagraphs
         self._compiled_paged_decode = torch.compile(
             self._paged_decode_block,
             dynamic=False,
-            options={"triton.cudagraphs": False},
+            mode="max-autotune-no-cudagraphs",
         )
 
     def forward(
@@ -759,13 +765,14 @@ class CausalLM(nn.Module):
         # currently always disabled: a whole-forward reduce-overhead
         # compile tripped an inductor functionalization bug, and per-layer
         # reduce-overhead chains trip cudagraph_trees aliasing. Per-layer
-        # kernel-fusion compile is what ships.
+        # kernel-fusion compile is what ships, with max-autotune for the
+        # small-batch decode GEMMs.
         del internal_cudagraphs
         self.model.enable_torch_compile(internal_cudagraphs=False)
         self._compiled_logits = torch.compile(
             self._project_logits,
             dynamic=False,
-            options={"triton.cudagraphs": False},
+            mode="max-autotune-no-cudagraphs",
         )
 
     def forward(
