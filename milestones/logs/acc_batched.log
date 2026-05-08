@@ -1,0 +1,56 @@
+
+============================================================
+  Accuracy Benchmark
+  Dataset     : mmlu
+  Samples     : 200
+  Max tokens  : 32
+  Concurrency : 8
+  Server      : http://localhost:8000
+============================================================
+
+Loading dataset...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Generating test split:   0%|          | 0/14042 [00:00<?, ? examples/s]Generating test split: 100%|██████████| 14042/14042 [00:00<00:00, 149740.97 examples/s]
+Generating validation split:   0%|          | 0/1531 [00:00<?, ? examples/s]Generating validation split: 100%|██████████| 1531/1531 [00:00<00:00, 118942.72 examples/s]
+Generating dev split:   0%|          | 0/285 [00:00<?, ? examples/s]Generating dev split: 100%|██████████| 285/285 [00:00<00:00, 49093.46 examples/s]
+Generating auxiliary_train split:   0%|          | 0/99842 [00:00<?, ? examples/s]Generating auxiliary_train split:   7%|▋         | 7000/99842 [00:00<00:01, 62362.74 examples/s]Generating auxiliary_train split:  17%|█▋        | 17000/99842 [00:00<00:01, 77200.50 examples/s]Generating auxiliary_train split:  30%|███       | 30000/99842 [00:00<00:00, 91317.10 examples/s]Generating auxiliary_train split:  41%|████      | 41000/99842 [00:00<00:00, 93294.78 examples/s]Generating auxiliary_train split:  54%|█████▍    | 54000/99842 [00:00<00:00, 99690.77 examples/s]Generating auxiliary_train split:  64%|██████▍   | 64000/99842 [00:00<00:00, 96968.72 examples/s]Generating auxiliary_train split:  83%|████████▎ | 83000/99842 [00:00<00:00, 122759.33 examples/s]Generating auxiliary_train split: 100%|██████████| 99842/99842 [00:00<00:00, 116869.49 examples/s]
+  Loaded 200 samples
+
+Running evaluation...
+  [10/200] accuracy=60.0%  latency=3.1s
+  [20/200] accuracy=60.0%  latency=0.9s
+  [30/200] accuracy=60.0%  latency=1.2s
+  [40/200] accuracy=57.5%  latency=4.7s
+  [50/200] accuracy=58.0%  latency=0.6s
+  [60/200] accuracy=60.0%  latency=5.6s
+  [70/200] accuracy=62.9%  latency=5.8s
+  [80/200] accuracy=61.3%  latency=0.4s
+  [90/200] accuracy=61.1%  latency=0.3s
+  [100/200] accuracy=61.0%  latency=5.4s
+  [110/200] accuracy=58.2%  latency=1.0s
+  [120/200] accuracy=59.2%  latency=5.4s
+  [130/200] accuracy=60.0%  latency=0.8s
+  [140/200] accuracy=60.7%  latency=1.7s
+  [150/200] accuracy=60.0%  latency=4.9s
+  [160/200] accuracy=60.0%  latency=1.0s
+  [170/200] accuracy=60.6%  latency=1.3s
+  [180/200] accuracy=62.2%  latency=0.5s
+  [190/200] accuracy=62.1%  latency=0.4s
+  [200/200] accuracy=62.0%  latency=2.5s
+
+============================================================
+  MMLU Accuracy Report
+  Samples    : 200
+  Correct    : 124
+  Accuracy   : 62.0%
+  Avg latency: 2.23s
+============================================================
+
+  Sample incorrect predictions (5 of 76):
+    Gold=1  Pred=2  Output: C...
+    Gold=2  Pred=1  Output: B. 2...
+    Gold=1  Pred=0  Output: A. Task culture...
+    Gold=1  Pred=2  Output: C. left submandibular lymph node....
+    Gold=0  Pred=None  Output: To solve this, we need to understand the energy levels of positronium.
+
+### Posi...

@@ -1,0 +1,62 @@
+  Auto-detected model: Qwen/Qwen3-8B
+
+============================================================
+  Serving Benchmark
+  Server       : http://localhost:8000
+  Model        : Qwen/Qwen3-8B
+  Requests     : max(conc*2, 8) per concurrency
+  Input len    : 64
+  Output len   : 256
+  Randomness   : 1.0
+  Concurrencies: [1, 2, 4]
+============================================================
+
+  Loading tokenizer...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Loading WildChat prompts...
+  Loaded 40 candidate prompts
+  Preparing 8 requests...
+  Input lengths:  min=64, max=68, mean=65
+  Output lengths: min=256, max=256, mean=256
+
+  Running concurrency=1 (8 requests)...
+    [  1/8] ok in=64 out=256 ttft=173ms compl=19594ms (elapsed 19.6s)
+    [  2/8] ok in=64 out=256 ttft=94ms compl=15265ms (elapsed 34.9s)
+    [  3/8] ok in=64 out=256 ttft=94ms compl=15281ms (elapsed 50.1s)
+    [  4/8] ok in=68 out=256 ttft=94ms compl=15279ms (elapsed 65.4s)
+    [  5/8] ok in=65 out=256 ttft=93ms compl=15271ms (elapsed 80.7s)
+    [  6/8] ok in=65 out=81 ttft=90ms compl=4918ms (elapsed 85.6s)
+    [  7/8] ok in=68 out=256 ttft=91ms compl=15274ms (elapsed 100.9s)
+    [  8/8] ok in=64 out=256 ttft=91ms compl=15282ms (elapsed 116.2s)
+  conc=1    TTFT p50=     93ms  p99=    167ms  Compl p50=  15276ms  p99=  19292ms  GenTok/s=     16  ok=8
+
+  Running concurrency=2 (8 requests)...
+    [  1/8] ok in=64 out=256 ttft=99ms compl=17159ms (elapsed 17.2s)
+    [  2/8] ok in=64 out=256 ttft=240ms compl=17224ms (elapsed 17.2s)
+    [  3/8] ok in=64 out=256 ttft=148ms compl=17231ms (elapsed 34.4s)
+    [  4/8] ok in=68 out=256 ttft=224ms compl=17236ms (elapsed 34.5s)
+    [  5/8] ok in=65 out=81 ttft=224ms compl=5614ms (elapsed 40.1s)
+    [  6/8] ok in=65 out=256 ttft=152ms compl=17294ms (elapsed 51.7s)
+    [  7/8] ok in=68 out=256 ttft=142ms compl=17225ms (elapsed 57.3s)
+    [  8/8] ok in=64 out=256 ttft=144ms compl=15934ms (elapsed 67.6s)
+  conc=2    TTFT p50=    150ms  p99=    239ms  Compl p50=  17224ms  p99=  17290ms  GenTok/s=     28  ok=8
+
+  Running concurrency=4 (8 requests)...
+    [  1/8] ok in=64 out=256 ttft=101ms compl=17708ms (elapsed 17.7s)
+    [  2/8] ok in=68 out=256 ttft=264ms compl=17785ms (elapsed 17.8s)
+    [  3/8] ok in=64 out=256 ttft=266ms compl=17788ms (elapsed 17.8s)
+    [  4/8] ok in=64 out=256 ttft=265ms compl=17788ms (elapsed 17.8s)
+    [  5/8] ok in=65 out=91 ttft=251ms compl=6434ms (elapsed 24.2s)
+    [  6/8] ok in=65 out=256 ttft=164ms compl=17556ms (elapsed 35.3s)
+    [  7/8] ok in=68 out=256 ttft=249ms compl=17546ms (elapsed 35.3s)
+    [  8/8] ok in=64 out=256 ttft=249ms compl=17545ms (elapsed 35.3s)
+  conc=4    TTFT p50=    250ms  p99=    266ms  Compl p50=  17632ms  p99=  17788ms  GenTok/s=     53  ok=8
+
+====================================================================================================
+ Conc   TTFT_p50   TTFT_p99  Compl_p50  Compl_p99   TPOT_p50   TPOT_p99   GenTok/s    OK
+       (ms)       (ms)        (ms)        (ms)        (ms)        (ms)
+----------------------------------------------------------------------------------------------------
+    1         93        167      15276      19292       59.6       75.1         16     8
+    2        150        239      17224      17290       66.9       67.4         28     8
+    4        250        266      17632      17788       68.7       69.0         53     8
+====================================================================================================
