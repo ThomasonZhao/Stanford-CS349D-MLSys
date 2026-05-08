@@ -123,14 +123,23 @@ class Engine:
             # forces fallback to eager once the cache fills. Raise the
             # ceiling so every bucket up to max_running stays compiled.
             try:
-                import torch._dynamo
-                torch._dynamo.config.cache_size_limit = max(
-                    torch._dynamo.config.cache_size_limit,
-                    max_running * 2 + 8,
+                # Aliased import: `import torch._dynamo` would rebind `torch`
+                # as a local for the whole function (Python scoping), masking
+                # earlier uses of `torch.device(...)`.
+                import torch._dynamo as _dynamo
+                # `_paged_decode_block` is a method on TransformerBlock —
+                # all 36 layer instances share one dynamo cache. With
+                # dynamic=False per-bucket compile, each (layer instance,
+                # bucket) pair is a separate specialization, so the cache
+                # needs at least num_layers * max_running entries.
+                target_cache = max(
+                    _dynamo.config.cache_size_limit,
+                    config.num_hidden_layers * max_running + 64,
                 )
-                torch._dynamo.config.accumulated_cache_size_limit = max(
-                    torch._dynamo.config.accumulated_cache_size_limit,
-                    max_running * 16 + 64,
+                _dynamo.config.cache_size_limit = target_cache
+                _dynamo.config.accumulated_cache_size_limit = max(
+                    _dynamo.config.accumulated_cache_size_limit,
+                    target_cache * 4,
                 )
             except Exception:
                 logger.warning("Could not raise dynamo cache_size_limit", exc_info=True)

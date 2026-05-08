@@ -338,7 +338,8 @@ class Attention(nn.Module):
         # Clean compile- and cuda-graph-friendly flash-attn paged decode.
         # Caller is responsible for guaranteeing flash-attn is available
         # and the inputs are CUDA tensors. No try/except, no Python
-        # side-effects — torch.compile traces this as a single op.
+        # side-effects — torch.compile graph-breaks at this opaque pybind
+        # call but every other op around it stays fused.
         return _flash_attn_with_kvcache(
             q,
             paged_ctx.k_cache_pool[layer_idx],
@@ -598,22 +599,18 @@ class TransformerBlock(nn.Module):
         # Compile the whole paged decode block at static bucket shapes. This
         # keeps attention, output projection, and MLP in one compiled region
         # and avoids the many small dynamic subfunction calls.
-        if internal_cudagraphs:
-            # mode="reduce-overhead" wraps the compiled function with
-            # inductor-managed cudagraphs. Use this when there is no
-            # manual cuda-graph layer above us — it gives the launch-
-            # overhead reduction the manual graph would otherwise provide.
-            self._compiled_paged_decode = torch.compile(
-                self._paged_decode_block,
-                dynamic=False,
-                mode="reduce-overhead",
-            )
-        else:
-            self._compiled_paged_decode = torch.compile(
-                self._paged_decode_block,
-                dynamic=False,
-                options={"triton.cudagraphs": False},
-            )
+        #
+        # internal_cudagraphs is intentionally a no-op for now: chaining 36
+        # separately-compiled layer regions trips inductor's cudagraph_trees
+        # alias guard (the residual buffer of layer N is reused by layer
+        # N+1's capture). Capture must happen at a coarser granularity to
+        # use mode="reduce-overhead" cleanly.
+        del internal_cudagraphs
+        self._compiled_paged_decode = torch.compile(
+            self._paged_decode_block,
+            dynamic=False,
+            options={"triton.cudagraphs": False},
+        )
 
     def forward(
         self,
@@ -758,19 +755,18 @@ class CausalLM(nn.Module):
         return self.lm_head(hidden)
 
     def enable_torch_compile(self, internal_cudagraphs: bool = False) -> None:
-        self.model.enable_torch_compile(internal_cudagraphs=internal_cudagraphs)
-        if internal_cudagraphs:
-            self._compiled_logits = torch.compile(
-                self._project_logits,
-                dynamic=False,
-                mode="reduce-overhead",
-            )
-        else:
-            self._compiled_logits = torch.compile(
-                self._project_logits,
-                dynamic=False,
-                options={"triton.cudagraphs": False},
-            )
+        # internal_cudagraphs flag is preserved for API compatibility but
+        # currently always disabled: a whole-forward reduce-overhead
+        # compile tripped an inductor functionalization bug, and per-layer
+        # reduce-overhead chains trip cudagraph_trees aliasing. Per-layer
+        # kernel-fusion compile is what ships.
+        del internal_cudagraphs
+        self.model.enable_torch_compile(internal_cudagraphs=False)
+        self._compiled_logits = torch.compile(
+            self._project_logits,
+            dynamic=False,
+            options={"triton.cudagraphs": False},
+        )
 
     def forward(
         self,
