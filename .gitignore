@@ -60,3 +60,6 @@ Thumbs.db
 
 # Claude Code (machine-local settings)
 .claude/settings.local.json
+
+# Working-notes log archive (kept locally, not part of the submission)
+milestones/logs/
