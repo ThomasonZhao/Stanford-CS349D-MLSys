@@ -116,6 +116,13 @@ def parse_args() -> argparse.Namespace:
         default=16384,
         help="paged: max RoPE position; cos/sin tables are sized at engine init",
     )
+    p.add_argument(
+        "--prefill-chunk-size",
+        type=int,
+        default=0,
+        help="paged: prompt tokens to prefill per scheduler step. 0 keeps "
+        "the milestone-2 single-shot prefill path.",
+    )
 
     # ── Milestone-2 accelerator flags (additive) ───────────────────────
     p.add_argument(
@@ -183,7 +190,14 @@ def main() -> None:
         attention_backend=args.attention_backend,
         flashinfer_workspace_mb=args.flashinfer_workspace_mb,
     )
-    sched = Scheduler(engine=engine, max_running=args.max_running, mode=args.mode)
+    # Chunk size is a scheduler policy: the engine owns the packed forward,
+    # while the scheduler decides how far each prefilling request advances.
+    sched = Scheduler(
+        engine=engine,
+        max_running=args.max_running,
+        mode=args.mode,
+        prefill_chunk_size=args.prefill_chunk_size,
+    )
 
     # Wire up the server module globals
     srv.engine = engine

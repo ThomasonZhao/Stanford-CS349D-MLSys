@@ -43,13 +43,23 @@ class Scheduler:
         stop()             — gracefully shut down
     """
 
-    def __init__(self, engine: Engine, max_running: int = 16, mode: str = "paged"):
+    def __init__(
+        self,
+        engine: Engine,
+        max_running: int = 16,
+        mode: str = "paged",
+        prefill_chunk_size: int = 0,
+    ):
+        if prefill_chunk_size < 0:
+            raise ValueError("prefill_chunk_size must be non-negative")
         self.engine = engine
         self.max_running = max_running
         self.mode = mode
+        self.prefill_chunk_size = prefill_chunk_size
 
         # Queues
         self.waiting: deque[Request] = deque()
+        self.prefilling: list[Request] = []
         self.running: list[Request] = []
 
         # Thread control
@@ -92,7 +102,9 @@ class Scheduler:
 
     def _loop(self) -> None:
         while self._running_flag:
-            has_work = bool(self.waiting) or bool(self.running)
+            has_work = (
+                bool(self.waiting) or bool(self.prefilling) or bool(self.running)
+            )
             if not has_work:
                 time.sleep(0.005)  # idle sleep to avoid busy-waiting
                 continue
@@ -180,6 +192,11 @@ class Scheduler:
         return finished
 
     def _step_paged(self) -> list[Request]:
+        if self.prefill_chunk_size == 0:
+            return self._step_paged_unchunked()
+        return self._step_paged_chunked()
+
+    def _step_paged_unchunked(self) -> list[Request]:
         """
         Paged-mode step — same shape as ``_step_batched`` but:
 
@@ -219,6 +236,84 @@ class Scheduler:
                     self.running.append(req)
 
         # ── Phase 2: paged batched decode ───────────────────────────────
+        if self.running:
+            token_ids = self.engine.paged_batched_decode(self.running)
+            still_running: list[Request] = []
+            for req, token_id in zip(self.running, token_ids):
+                req.output_ids.append(token_id)
+                self._stream_token(req, token_id)
+                if self._check_finished(req, token_id):
+                    self._finish_request(req, finished)
+                else:
+                    still_running.append(req)
+            self.running = still_running
+
+        return finished
+
+    def _step_paged_chunked(self) -> list[Request]:
+        """
+        Paged-mode step with chunked prefill enabled.
+
+        Admission still reserves all prompt KV pages up front.  Each step
+        advances every prefilling request by one prompt chunk in a single
+        packed forward, then runs decode for the active running set.
+        Interleaving decode between chunks is future work; this first cut
+        keeps the phase order simple and deterministic.
+        """
+        finished: list[Request] = []
+        pool = self.engine.pool
+        assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+
+        # ── Phase 1: admit requests whose full prompt KV fits ──────────
+        with self._lock:
+            to_admit: list[Request] = []
+            planned_pages = 0
+            while (
+                self.waiting
+                and len(self.running) + len(self.prefilling) + len(to_admit)
+                < self.max_running
+            ):
+                req = self.waiting[0]
+                need = pool.pages_needed(len(req.input_ids))
+                if pool.num_free - planned_pages < need:
+                    break  # head-of-line request waits for full prompt capacity
+                planned_pages += need
+                to_admit.append(self.waiting.popleft())
+
+        for req in to_admit:
+            req.status = RequestStatus.RUNNING
+            self.engine.prepare_paged_prefill(req)
+            self.prefilling.append(req)
+
+        # ── Phase 2: one packed chunk for all prefilling requests ───────
+        if self.prefilling:
+            token_ids = self.engine.paged_chunked_prefill(
+                self.prefilling, self.prefill_chunk_size
+            )
+            still_prefilling: list[Request] = []
+            completed = 0
+            for req, token_id in zip(self.prefilling, token_ids):
+                if token_id is None:
+                    still_prefilling.append(req)
+                    continue
+                completed += 1
+                req.output_ids.append(token_id)
+                self._stream_token(req, token_id)
+                if self._check_finished(req, token_id):
+                    self._finish_request(req, finished)
+                else:
+                    self.running.append(req)
+            self.prefilling = still_prefilling
+            logger.info(
+                "Chunked prefill step  batch=%d  chunk_size=%d  "
+                "completed=%d  remaining=%d",
+                len(token_ids),
+                self.prefill_chunk_size,
+                completed,
+                len(self.prefilling),
+            )
+
+        # ── Phase 3: paged batched decode ───────────────────────────────
         if self.running:
             token_ids = self.engine.paged_batched_decode(self.running)
             still_running: list[Request] = []
