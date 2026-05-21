@@ -24,6 +24,9 @@ bench = [
     "numpy",
     "tqdm",
 ]
+test = [
+    "pytest",
+]
 
 [project.scripts]
 miniengine = "miniengine.__main__:main"

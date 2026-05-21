@@ -1,4 +1,7 @@
+import io
+import logging
 import math
+from contextlib import contextmanager
 
 import torch
 
@@ -143,6 +146,31 @@ def _run_to_finish(scheduler: Scheduler, limit: int = 100) -> list[Request]:
     raise AssertionError("scheduler did not finish within step limit")
 
 
+@contextmanager
+def _temporary_attr(obj, name: str, value):
+    old = getattr(obj, name)
+    setattr(obj, name, value)
+    try:
+        yield
+    finally:
+        setattr(obj, name, old)
+
+
+@contextmanager
+def _capture_engine_logs():
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logger = logging.getLogger("miniengine.engine")
+    old_level = logger.level
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    try:
+        yield stream
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+
+
 def test_chunk_size_zero_uses_unchunked_paged_path_and_matches_tokens():
     prompt_len = 128
 
@@ -236,7 +264,7 @@ def test_mixed_batch_completes_each_request_on_its_expected_chunk():
     ]
 
 
-def test_engine_chunked_prefill_positions_and_final_logits_only(monkeypatch):
+def test_engine_chunked_prefill_positions_and_final_logits_only():
     engine = Engine.__new__(Engine)
     engine.device = "cpu"
     engine.pool = FakePool(page_size=4)
@@ -246,7 +274,6 @@ def test_engine_chunked_prefill_positions_and_final_logits_only(monkeypatch):
     engine._paged_state = {}
     engine.attention_backend = "flash_attn"
     engine.model = FakeModel()
-    monkeypatch.setattr(engine, "_fa_kwargs_chunked_prefill", lambda *args: {})
 
     req = _request("r", 10, max_new_tokens=1)
     state = engine._state(req)
@@ -254,25 +281,73 @@ def test_engine_chunked_prefill_positions_and_final_logits_only(monkeypatch):
     state.prefill_offset = 0
     state.prefill_target = len(req.input_ids)
 
-    assert engine.paged_chunked_prefill([req], 4) == [None]
-    assert engine.model.calls[-1] == {
-        "input_ids": [[0, 1, 2, 3]],
-        "position_ids": [[0, 1, 2, 3]],
-        "logits_indices": [],
-    }
+    with (
+        _temporary_attr(engine, "_fa_kwargs_chunked_prefill", lambda *args: {}),
+        _capture_engine_logs() as logs,
+    ):
+        assert engine.paged_chunked_prefill([req], 4) == [None]
+        assert engine.model.calls[-1] == {
+            "input_ids": [[0, 1, 2, 3]],
+            "position_ids": [[0, 1, 2, 3]],
+            "logits_indices": [],
+        }
 
-    assert engine.paged_chunked_prefill([req], 4) == [None]
-    assert engine.model.calls[-1] == {
-        "input_ids": [[4, 5, 6, 7]],
-        "position_ids": [[4, 5, 6, 7]],
-        "logits_indices": [],
-    }
+        assert engine.paged_chunked_prefill([req], 4) == [None]
+        assert engine.model.calls[-1] == {
+            "input_ids": [[4, 5, 6, 7]],
+            "position_ids": [[4, 5, 6, 7]],
+            "logits_indices": [],
+        }
 
-    assert engine.paged_chunked_prefill([req], 4) == [7]
-    assert engine.model.calls[-1] == {
-        "input_ids": [[8, 9]],
-        "position_ids": [[8, 9]],
-        "logits_indices": [1],
-    }
+        assert engine.paged_chunked_prefill([req], 4) == [7]
+        assert engine.model.calls[-1] == {
+            "input_ids": [[8, 9]],
+            "position_ids": [[8, 9]],
+            "logits_indices": [1],
+        }
     assert state.cache_seq_len == 10
     assert state.is_prefill_done
+    assert logs.getvalue().splitlines() == [
+        "[chunked_prefill] req=r chunk=1/3",
+        "[chunked_prefill] req=r chunk=2/3",
+        "[chunked_prefill] req=r chunk=3/3",
+    ]
+
+
+def test_engine_chunked_prefill_mixed_final_entries_keep_output_order():
+    engine = Engine.__new__(Engine)
+    engine.device = "cpu"
+    engine.pool = FakePool(page_size=4)
+    engine.page_size = 4
+    engine.max_position = 128
+    engine._kv_pool_caches = []
+    engine._paged_state = {}
+    engine.attention_backend = "flash_attn"
+    engine.model = FakeModel()
+
+    first_chunk_done = _request("first", 2, max_new_tokens=1)
+    second_chunk_done = _request("second", 5, max_new_tokens=1)
+
+    state_a = engine._state(first_chunk_done)
+    state_a.page_table = [1]
+    state_a.prefill_offset = 0
+    state_a.prefill_target = len(first_chunk_done.input_ids)
+
+    state_b = engine._state(second_chunk_done)
+    state_b.page_table = [2, 3]
+    state_b.prefill_offset = 4
+    state_b.prefill_target = len(second_chunk_done.input_ids)
+
+    with _temporary_attr(engine, "_fa_kwargs_chunked_prefill", lambda *args: {}):
+        token_ids = engine.paged_chunked_prefill(
+            [first_chunk_done, second_chunk_done], 4
+        )
+
+    assert token_ids == [7, 8]
+    assert engine.model.calls[-1] == {
+        "input_ids": [[0, 1, 4]],
+        "position_ids": [[0, 1, 4]],
+        "logits_indices": [1, 2],
+    }
+    assert state_a.cache_seq_len == 2
+    assert state_b.cache_seq_len == 5

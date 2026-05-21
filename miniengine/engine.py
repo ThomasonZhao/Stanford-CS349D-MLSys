@@ -22,6 +22,7 @@ stays mode-agnostic.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -595,8 +596,10 @@ class Engine:
         active: list[tuple[int, Request, _PagedState, int, int]] = []
         for idx, req in enumerate(requests):
             s = self._state(req)
-            if s.is_prefill_done:
-                continue
+            assert not s.is_prefill_done, (
+                "paged_chunked_prefill received a request whose prefill "
+                f"is already complete: {req.request_id}"
+            )
             start = s.prefill_offset
             end = min(start + chunk_size, s.prefill_target)
             if end <= start:
@@ -609,8 +612,6 @@ class Engine:
 
         chunk_lens = [end - start for _, _, _, start, end in active]
         kv_lens = [end for _, _, _, _, end in active]
-        cu_q = _cu_seqlens(chunk_lens, self.device)
-        cu_k = _cu_seqlens(kv_lens, self.device)
 
         flat_ids = [
             token_id
@@ -640,11 +641,22 @@ class Engine:
         states = [s for _, _, s, _, _ in active]
         starts = [start for _, _, _, start, _ in active]
         ends = [end for _, _, _, _, end in active]
+        for _, req, s, _, end in active:
+            chunk_i = math.ceil(end / chunk_size)
+            chunk_n = math.ceil(s.prefill_target / chunk_size)
+            logger.info(
+                "[chunked_prefill] req=%s chunk=%d/%d",
+                req.request_id,
+                chunk_i,
+                chunk_n,
+            )
         if self.attention_backend == "flashinfer":
             backend_kwargs = self._fi_kwargs_chunked_prefill(
                 states, starts, ends, chunk_lens, kv_lens
             )
         else:
+            cu_q = _cu_seqlens(chunk_lens, self.device)
+            cu_k = _cu_seqlens(kv_lens, self.device)
             backend_kwargs = self._fa_kwargs_chunked_prefill(
                 states, starts, ends, chunk_lens, kv_lens, cu_q, cu_k
             )

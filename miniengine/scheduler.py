@@ -29,13 +29,17 @@ logger = logging.getLogger(__name__)
 
 class Scheduler:
     """
-    FCFS scheduler with two modes:
+    FCFS scheduler with three modes:
 
       baseline : process one request to completion before the next.
       batched  : iteration-level batching — admit + prefill many requests,
                  then advance all running requests by one token in a
                  single batched forward pass.  New requests can join the
                  batch the same step they finish prefill.
+      paged    : KV-pool-backed scheduling with packed prefill and paged
+                 decode.  With ``prefill_chunk_size > 0``, admitted
+                 requests sit in ``prefilling`` until their prompt chunks
+                 have all been processed.
 
     Public API (thread-safe):
         add_request(req)   — enqueue a new request
