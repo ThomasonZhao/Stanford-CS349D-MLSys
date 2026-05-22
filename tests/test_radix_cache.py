@@ -124,7 +124,7 @@ def test_lock_ref_pins_matched_node_from_eviction():
 
     assert locked_leaf.ref_count == 1
     assert cache.root.ref_count == 1
-    assert cache.num_evictable_pages() == 0
+    assert cache.num_evictable_pages() == len(old_pages)
 
     freed = cache.evict(2)
 

@@ -123,7 +123,7 @@ class RadixCache:
         stack = [self.root]
         while stack:
             node = stack.pop()
-            if node is not self.root and self._path_unlocked(node):
+            if node is not self.root and node.ref_count == 0:
                 total += len(node.pages)
             stack.extend(node.children.values())
         return total
@@ -388,12 +388,3 @@ class RadixCache:
                 del parent.children[key]
                 return
         raise AssertionError("radix child missing from parent")
-
-    @staticmethod
-    def _path_unlocked(node: RadixNode) -> bool:
-        cur: RadixNode | None = node
-        while cur is not None:
-            if cur.ref_count != 0:
-                return False
-            cur = cur.parent
-        return True
