@@ -130,14 +130,23 @@ class RadixCache:
 
     # ── Lookup ─────────────────────────────────────────────────────────
 
-    def match_prefix(self, tokens: list[int]) -> MatchResult:
+    def match_prefix(
+        self, tokens: list[int], max_tokens: int | None = None
+    ) -> MatchResult:
         """Find the longest page-aligned prefix of ``tokens`` in the tree.
 
+        ``max_tokens`` optionally caps the returned hit.  It is rounded down
+        to a page boundary; query-token metrics still count the full request.
         Update ``metrics.total_lookups`` / ``total_query_tokens`` /
         ``total_hit_tokens`` so the perf counters are accurate.
         """
         self.metrics.total_lookups += 1
         self.metrics.total_query_tokens += len(tokens)
+        if max_tokens is None:
+            hit_cap = len(tokens)
+        else:
+            hit_cap = max(0, min(max_tokens, len(tokens)))
+        hit_cap = (hit_cap // self.page_size) * self.page_size
 
         now = time.monotonic()
         self.root.last_access = now
@@ -148,13 +157,14 @@ class RadixCache:
         last_node: RadixNode | None = None
         pos = 0
 
-        while pos + self.page_size <= len(tokens):
+        while matched_tokens < hit_cap and pos + self.page_size <= len(tokens):
             child = node.children.get(self._page_key(tokens, pos))
             if child is None:
                 break
 
             common = self._common_prefix_len(child.key, tokens[pos:])
             matched_in_child = (common // self.page_size) * self.page_size
+            matched_in_child = min(matched_in_child, hit_cap - matched_tokens)
             if matched_in_child == 0:
                 break
 

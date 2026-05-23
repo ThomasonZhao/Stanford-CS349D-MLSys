@@ -548,6 +548,8 @@ class Engine:
         s = self._state(req)
         if s.page_table:
             if s.prefill_target == len(req.input_ids):
+                assert 0 <= s.prefill_offset <= s.prefill_target
+                assert 0 <= s.cache_seq_len <= s.prefill_target
                 return
             raise RuntimeError(f"request {req.request_id} already has paged KV state")
         prompt_len = len(req.input_ids)

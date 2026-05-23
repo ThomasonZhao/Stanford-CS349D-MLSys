@@ -228,6 +228,8 @@ class Scheduler:
                         break  # can't fit; wait for pages to free
                     to_prefill.append(self.waiting.popleft())
         else:
+            # This is the scheduler's longest critical section: admission must
+            # atomically match, lock, allocate, and roll back on OOM.
             with self._lock:
                 while (
                     self.waiting
@@ -244,16 +246,15 @@ class Scheduler:
         if to_prefill:
             for req in to_prefill:
                 req.status = RequestStatus.RUNNING
-            for req, token_id in zip(
-                to_prefill, self.engine.paged_batched_prefill(to_prefill)
-            ):
+            token_ids = self.engine.paged_batched_prefill(to_prefill)
+            self._log_cache_prefill_batch(to_prefill)
+            for req, token_id in zip(to_prefill, token_ids):
                 req.output_ids.append(token_id)
                 self._stream_token(req, token_id)
                 if self._check_finished(req, token_id):
                     self._finish_request(req, finished)
                 else:
                     self.running.append(req)
-            self._log_cache_prefill_batch(to_prefill)
 
         # ── Phase 2: paged batched decode ───────────────────────────────
         if self.running:
@@ -302,6 +303,8 @@ class Scheduler:
                     planned_pages += need
                     to_admit.append(self.waiting.popleft())
         else:
+            # This is the scheduler's longest critical section: admission must
+            # atomically match, lock, allocate, and roll back on OOM.
             with self._lock:
                 while (
                     self.waiting
@@ -328,6 +331,7 @@ class Scheduler:
             token_ids = self.engine.paged_chunked_prefill(
                 self.prefilling, self.prefill_chunk_size
             )
+            self._log_cache_prefill_batch(prefill_batch)
             still_prefilling: list[Request] = []
             completed = 0
             for req, token_id in zip(self.prefilling, token_ids):
@@ -350,7 +354,6 @@ class Scheduler:
                 completed,
                 len(self.prefilling),
             )
-            self._log_cache_prefill_batch(prefill_batch)
 
         # ── Phase 3: paged batched decode ───────────────────────────────
         if self.running:
@@ -382,16 +385,13 @@ class Scheduler:
         if state.page_table:
             raise RuntimeError(f"request {req.request_id} already has paged KV state")
 
-        result = cache.match_prefix(req.input_ids)
-
         # The cache stores K/V, not the logits needed to sample the first
         # generated token, so prefill must recompute at least one prompt token.
         max_hit_tokens = max(0, (len(req.input_ids) - 1) // pool.page_size)
         max_hit_tokens *= pool.page_size
-        hit_tokens = min(result.matched_tokens, max_hit_tokens)
-        if hit_tokens < result.matched_tokens:
-            cache.metrics.total_hit_tokens -= result.matched_tokens - hit_tokens
-        cached_pages = result.matched_pages[: hit_tokens // pool.page_size]
+        result = cache.match_prefix(req.input_ids, max_tokens=max_hit_tokens)
+        hit_tokens = result.matched_tokens
+        cached_pages = result.matched_pages
 
         req.cache_hit_tokens = hit_tokens
         state.cache_hit_pages = list(cached_pages)
@@ -477,6 +477,10 @@ class Scheduler:
         )
 
     def _finish_paged_request(self, req: Request) -> None:
+        """Cache-enabled retirement owns page donation and prefix unlocks.
+
+        ``engine.free_paged_state`` remains the cache-disabled and abort helper.
+        """
         cache = getattr(self.engine, "radix_cache", None)
         if cache is None:
             self.engine.free_paged_state(req)
@@ -509,5 +513,6 @@ class Scheduler:
             else:
                 pool.free([p for p in state.page_table if p not in borrowed])
         finally:
+            # ``None`` is the deliberate miss-path no-op.
             cache.dec_lock_ref(state.cache_node)
             state.cache_node = None
