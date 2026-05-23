@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import Callable
 
 import torch
 
@@ -88,6 +89,7 @@ class KVMemoryPool:
 
         # Free list: every page except the reserved scratch page.
         self._free: list[int] = list(range(1, num_pages))
+        self.evict_cb: Callable[[int], int] | None = None
 
         elem = torch.tensor([], dtype=dtype).element_size()
         bytes_total = (
@@ -112,6 +114,8 @@ class KVMemoryPool:
             raise ValueError(f"num_pages must be non-negative, got {num_pages}")
         if num_pages == 0:
             return []
+        if len(self._free) < num_pages and self.evict_cb is not None:
+            self.evict_cb(num_pages - len(self._free))
         if len(self._free) < num_pages:
             raise RuntimeError(
                 f"KV pool exhausted: requested {num_pages}, "

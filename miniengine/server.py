@@ -77,6 +77,7 @@ async def cache_stats():
         return {"enabled": False}
     m = cache.metrics
     pool = engine.pool
+    evictable_pages = cache.num_evictable_pages()
     return {
         "enabled": True,
         "hit_rate": m.hit_rate,
@@ -86,8 +87,9 @@ async def cache_stats():
         "total_inserted_pages": m.total_inserted_pages,
         "total_evicted_pages": m.total_evicted_pages,
         "num_cached_pages": getattr(cache, "num_cached_pages", 0),
+        "num_evictable_pages": evictable_pages,
         "pool_num_free": pool.num_free if pool is not None else 0,
-        "pool_num_evictable": getattr(pool, "num_evictable", 0),
+        "pool_num_evictable": evictable_pages,
     }
 
 

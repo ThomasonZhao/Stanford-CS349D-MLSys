@@ -33,6 +33,7 @@ from transformers import AutoTokenizer
 from miniengine.core import Request
 from miniengine.kv_memory_pool import KVMemoryPool
 from miniengine.model import CausalLM, FlashInferContext, ModelConfig, load_weights
+from miniengine.radix_cache import RadixCache, RadixNode
 from miniengine.sampler import sample_token
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,8 @@ class _PagedState:
     cache_seq_len: int = 0
     prefill_offset: int = 0
     prefill_target: int = 0
+    cache_node: RadixNode | None = None
+    cache_hit_pages: list[int] = field(default_factory=list)
 
     @property
     def is_prefill_done(self) -> bool:
@@ -89,6 +92,7 @@ class Engine:
         cuda_graph_max_pages: int = 32,
         attention_backend: str = "flashinfer",
         flashinfer_workspace_mb: int = 128,
+        disable_radix_cache: bool = False,
     ):
         if cuda_graph and mode != "paged":
             raise ValueError("cuda_graph requires mode='paged'")
@@ -145,6 +149,7 @@ class Engine:
 
         # ── Paged-mode setup (only when mode == "paged") ───────────────
         self.pool: KVMemoryPool | None = None
+        self.radix_cache: RadixCache | None = None
         self.page_size = page_size
         self.max_position = max_position
         self._kv_pool_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None
@@ -177,6 +182,12 @@ class Engine:
                 bytes_budget=kv_pool_bytes,
             )
             self._kv_pool_caches = self.pool.kv_caches
+            if not disable_radix_cache:
+                self.radix_cache = RadixCache(self.pool)
+                self.pool.evict_cb = self.radix_cache.evict
+                logger.info("Radix prefix cache enabled")
+            else:
+                logger.info("Radix prefix cache disabled")
             # Pre-grow RoPE so the paged forward stays alloc-free
             # (graph-capture and torch.compile safe).
             self.model.model.rotary_emb.preallocate(
@@ -518,14 +529,26 @@ class Engine:
     def free_paged_state(self, req: Request) -> None:
         """Release a request's pages back to the pool."""
         s = self._paged_state.pop(req.request_id, None)
-        if s is not None and s.page_table and self.pool is not None:
-            self.pool.free(s.page_table)
+        if s is None:
+            return
+        if self.radix_cache is not None:
+            self.radix_cache.dec_lock_ref(s.cache_node)
+            s.cache_node = None
+        if s.page_table and self.pool is not None:
+            borrowed = set(s.cache_hit_pages)
+            self.pool.free([p for p in s.page_table if p not in borrowed])
+
+    def pop_paged_state(self, req: Request) -> _PagedState | None:
+        """Remove paged bookkeeping without returning any pages."""
+        return self._paged_state.pop(req.request_id, None)
 
     def prepare_paged_prefill(self, req: Request) -> None:
         """Allocate all prompt KV pages and initialize chunked prefill state."""
         assert self.pool is not None
         s = self._state(req)
         if s.page_table:
+            if s.prefill_target == len(req.input_ids):
+                return
             raise RuntimeError(f"request {req.request_id} already has paged KV state")
         prompt_len = len(req.input_ids)
         s.page_table = self.pool.allocate(self.pool.pages_needed(prompt_len))
@@ -543,32 +566,56 @@ class Engine:
         assert self.pool is not None
         states = [self._state(r) for r in requests]
         for r, s in zip(requests, states):
-            s.page_table = self.pool.allocate(self.pool.pages_needed(len(r.input_ids)))
-            s.cache_seq_len = 0
+            if not s.page_table:
+                s.page_table = self.pool.allocate(
+                    self.pool.pages_needed(len(r.input_ids))
+                )
+                s.prefill_offset = 0
+                s.prefill_target = len(r.input_ids)
+                s.cache_seq_len = 0
+            elif s.prefill_target == 0:
+                s.prefill_target = len(r.input_ids)
 
-        seq_lens = [len(r.input_ids) for r in requests]
-        cu = _cu_seqlens(seq_lens, self.device)
+        starts = [s.prefill_offset for s in states]
+        ends = [len(r.input_ids) for r in requests]
+        chunk_lens = [end - start for start, end in zip(starts, ends)]
+        if any(q_len <= 0 for q_len in chunk_lens):
+            raise RuntimeError(
+                "paged_batched_prefill requires at least one uncached prompt token "
+                "per request so it can sample first-token logits"
+            )
 
-        flat_ids = [t for r in requests for t in r.input_ids]
-        flat_pos = [p for n in seq_lens for p in range(n)]
+        cu_q = _cu_seqlens(chunk_lens, self.device)
+        cu_k = _cu_seqlens(ends, self.device)
+
+        flat_ids = [
+            token_id
+            for r, start, end in zip(requests, starts, ends)
+            for token_id in r.input_ids[start:end]
+        ]
+        flat_pos = [p for start, end in zip(starts, ends) for p in range(start, end)]
         input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
         position_ids = _to_long(flat_pos, self.device).unsqueeze(0)
-        last_idx = (cu[1:] - 1).long()
+        last_idx = (cu_q[1:] - 1).long()
 
         common = dict(
             kv_pool_caches=self._kv_pool_caches,
             logits_indices=last_idx,
         )
         if self.attention_backend == "flashinfer":
-            backend_kwargs = self._fi_kwargs_prefill(states, seq_lens)
+            backend_kwargs = self._fi_kwargs_chunked_prefill(
+                states, starts, ends, chunk_lens, ends
+            )
         else:
-            backend_kwargs = self._fa_kwargs_prefill(states, seq_lens, cu)
+            backend_kwargs = self._fa_kwargs_chunked_prefill(
+                states, starts, ends, chunk_lens, ends, cu_q, cu_k
+            )
 
         logits, _ = self.model(input_ids, position_ids, **common, **backend_kwargs)
         # (1, num_seqs, vocab) thanks to logits_indices
 
         out: list[int] = []
-        for i, (r, s, n) in enumerate(zip(requests, states, seq_lens)):
+        for i, (r, s, n) in enumerate(zip(requests, states, ends)):
             s.cache_seq_len = n
             s.prefill_offset = n
             s.prefill_target = n

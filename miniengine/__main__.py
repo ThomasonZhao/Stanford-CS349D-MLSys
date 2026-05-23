@@ -123,6 +123,11 @@ def parse_args() -> argparse.Namespace:
         help="paged: prompt tokens to prefill per scheduler step. 0 keeps "
         "the milestone-2 single-shot prefill path.",
     )
+    p.add_argument(
+        "--disable-radix-cache",
+        action="store_true",
+        help="paged: disable the radix prefix cache. The cache is on by default.",
+    )
 
     # ── Milestone-2 accelerator flags (additive) ───────────────────────
     p.add_argument(
@@ -189,6 +194,7 @@ def main() -> None:
         cuda_graph_max_pages=args.cuda_graph_max_pages,
         attention_backend=args.attention_backend,
         flashinfer_workspace_mb=args.flashinfer_workspace_mb,
+        disable_radix_cache=args.disable_radix_cache,
     )
     # Chunk size is a scheduler policy: the engine owns the packed forward,
     # while the scheduler decides how far each prefilling request advances.

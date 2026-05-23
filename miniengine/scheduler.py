@@ -213,18 +213,33 @@ class Scheduler:
         finished: list[Request] = []
         pool = self.engine.pool
         assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+        cache = getattr(self.engine, "radix_cache", None)
 
         # ── Phase 1: admit + batched paged prefill ──────────────────────
-        with self._lock:
-            to_prefill: list[Request] = []
-            while (
-                self.waiting
-                and len(self.running) + len(to_prefill) < self.max_running
-            ):
-                req = self.waiting[0]
-                if pool.num_free < pool.pages_needed(len(req.input_ids)):
-                    break  # can't fit; wait for pages to free
-                to_prefill.append(self.waiting.popleft())
+        to_prefill: list[Request] = []
+        if cache is None:
+            with self._lock:
+                while (
+                    self.waiting
+                    and len(self.running) + len(to_prefill) < self.max_running
+                ):
+                    req = self.waiting[0]
+                    if pool.num_free < pool.pages_needed(len(req.input_ids)):
+                        break  # can't fit; wait for pages to free
+                    to_prefill.append(self.waiting.popleft())
+        else:
+            with self._lock:
+                while (
+                    self.waiting
+                    and len(self.running) + len(to_prefill) < self.max_running
+                ):
+                    req = self.waiting.popleft()
+                    try:
+                        self._prepare_paged_prefill_for_admission(req)
+                    except RuntimeError:
+                        self.waiting.appendleft(req)
+                        break
+                    to_prefill.append(req)
 
         if to_prefill:
             for req in to_prefill:
@@ -238,6 +253,7 @@ class Scheduler:
                     self._finish_request(req, finished)
                 else:
                     self.running.append(req)
+            self._log_cache_prefill_batch(to_prefill)
 
         # ── Phase 2: paged batched decode ───────────────────────────────
         if self.running:
@@ -267,30 +283,48 @@ class Scheduler:
         finished: list[Request] = []
         pool = self.engine.pool
         assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+        cache = getattr(self.engine, "radix_cache", None)
 
         # ── Phase 1: admit requests whose full prompt KV fits ──────────
-        with self._lock:
-            to_admit: list[Request] = []
-            planned_pages = 0
-            while (
-                self.waiting
-                and len(self.running) + len(self.prefilling) + len(to_admit)
-                < self.max_running
-            ):
-                req = self.waiting[0]
-                need = pool.pages_needed(len(req.input_ids))
-                if pool.num_free - planned_pages < need:
-                    break  # head-of-line request waits for full prompt capacity
-                planned_pages += need
-                to_admit.append(self.waiting.popleft())
+        to_admit: list[Request] = []
+        if cache is None:
+            with self._lock:
+                planned_pages = 0
+                while (
+                    self.waiting
+                    and len(self.running) + len(self.prefilling) + len(to_admit)
+                    < self.max_running
+                ):
+                    req = self.waiting[0]
+                    need = pool.pages_needed(len(req.input_ids))
+                    if pool.num_free - planned_pages < need:
+                        break  # head-of-line request waits for full prompt capacity
+                    planned_pages += need
+                    to_admit.append(self.waiting.popleft())
+        else:
+            with self._lock:
+                while (
+                    self.waiting
+                    and len(self.running) + len(self.prefilling) + len(to_admit)
+                    < self.max_running
+                ):
+                    req = self.waiting.popleft()
+                    try:
+                        self._prepare_paged_prefill_for_admission(req)
+                    except RuntimeError:
+                        self.waiting.appendleft(req)
+                        break
+                    to_admit.append(req)
 
         for req in to_admit:
             req.status = RequestStatus.RUNNING
-            self.engine.prepare_paged_prefill(req)
+            if cache is None:
+                self.engine.prepare_paged_prefill(req)
             self.prefilling.append(req)
 
         # ── Phase 2: one packed chunk for all prefilling requests ───────
         if self.prefilling:
+            prefill_batch = list(self.prefilling)
             token_ids = self.engine.paged_chunked_prefill(
                 self.prefilling, self.prefill_chunk_size
             )
@@ -316,6 +350,7 @@ class Scheduler:
                 completed,
                 len(self.prefilling),
             )
+            self._log_cache_prefill_batch(prefill_batch)
 
         # ── Phase 3: paged batched decode ───────────────────────────────
         if self.running:
@@ -333,6 +368,79 @@ class Scheduler:
         return finished
 
     # ── Helpers ─────────────────────────────────────────────────────────
+
+    def _prepare_paged_prefill_for_admission(self, req: Request) -> None:
+        """Reserve paged KV for a newly admitted request, applying cache hits."""
+        pool = self.engine.pool
+        assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+        cache = getattr(self.engine, "radix_cache", None)
+        if cache is None:
+            self.engine.prepare_paged_prefill(req)
+            return
+
+        state = self.engine._state(req)
+        if state.page_table:
+            raise RuntimeError(f"request {req.request_id} already has paged KV state")
+
+        result = cache.match_prefix(req.input_ids)
+
+        # The cache stores K/V, not the logits needed to sample the first
+        # generated token, so prefill must recompute at least one prompt token.
+        max_hit_tokens = max(0, (len(req.input_ids) - 1) // pool.page_size)
+        max_hit_tokens *= pool.page_size
+        hit_tokens = min(result.matched_tokens, max_hit_tokens)
+        if hit_tokens < result.matched_tokens:
+            cache.metrics.total_hit_tokens -= result.matched_tokens - hit_tokens
+        cached_pages = result.matched_pages[: hit_tokens // pool.page_size]
+
+        req.cache_hit_tokens = hit_tokens
+        state.cache_hit_pages = list(cached_pages)
+        state.cache_node = result.last_node if hit_tokens > 0 else None
+        state.cache_seq_len = hit_tokens
+        state.prefill_offset = hit_tokens
+        state.prefill_target = len(req.input_ids)
+
+        if state.cache_node is not None:
+            cache.inc_lock_ref(state.cache_node)
+
+        fresh_needed = pool.pages_needed(len(req.input_ids)) - len(cached_pages)
+        try:
+            fresh_pages = pool.allocate(fresh_needed)
+        except RuntimeError:
+            if state.cache_node is not None:
+                cache.dec_lock_ref(state.cache_node)
+            state.cache_node = None
+            state.cache_hit_pages = []
+            state.cache_seq_len = 0
+            state.prefill_offset = 0
+            state.prefill_target = 0
+            raise
+
+        state.page_table = list(cached_pages) + fresh_pages
+
+    def _log_cache_prefill_batch(self, batch: list[Request]) -> None:
+        cache = getattr(self.engine, "radix_cache", None)
+        if cache is None or not batch:
+            return
+        pool = self.engine.pool
+        assert pool is not None
+        query_tokens = sum(len(req.input_ids) for req in batch)
+        hit_tokens = sum(req.cache_hit_tokens for req in batch)
+        pct = (100.0 * hit_tokens / query_tokens) if query_tokens else 0.0
+        states = getattr(self.engine, "_paged_state", {})
+        running_pages = sum(len(s.page_table) for s in states.values())
+        logger.info(
+            "[cache] batch=%d hit_tokens=%d/%d (%.1f%%) "
+            "running_pages=%d cache_pages=%d evictable=%d free=%d",
+            len(batch),
+            hit_tokens,
+            query_tokens,
+            pct,
+            running_pages,
+            cache.num_cached_pages,
+            cache.num_evictable_pages(),
+            pool.num_free,
+        )
 
     def _check_finished(self, req: Request, token_id: int) -> bool:
         """Decide whether a request should stop generating."""
@@ -354,7 +462,7 @@ class Scheduler:
         req.status = RequestStatus.FINISHED
         req.kv_cache = None  # release GPU memory (baseline / batched modes)
         if self.mode == "paged":
-            self.engine.free_paged_state(req)
+            self._finish_paged_request(req)
         req.token_queue.put(TokenOutput(token_id=-1, token_text="", finished=True))
         finished_list.append(req)
 
@@ -367,3 +475,39 @@ class Scheduler:
             len(self.running),
             len(self.waiting),
         )
+
+    def _finish_paged_request(self, req: Request) -> None:
+        cache = getattr(self.engine, "radix_cache", None)
+        if cache is None:
+            self.engine.free_paged_state(req)
+            return
+
+        pool = self.engine.pool
+        assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+        state = self.engine.pop_paged_state(req)
+        if state is None:
+            return
+
+        borrowed = set(state.cache_hit_pages)
+        try:
+            # The final sampled token has not been fed back through decode yet,
+            # so its KV is not materialized. Cache prompt + generated tokens
+            # only up to the engine's realized cache length.
+            materialized_tokens = req.input_ids + req.output_ids[:-1]
+            materialized_len = min(len(materialized_tokens), state.cache_seq_len)
+            page_aligned = (materialized_len // pool.page_size) * pool.page_size
+
+            if page_aligned > 0:
+                page_count = page_aligned // pool.page_size
+                cached_tokens = materialized_tokens[:page_aligned]
+                cached_pages = state.page_table[:page_count]
+                _, redundant = cache.insert_and_return(cached_tokens, cached_pages)
+                pool.free([p for p in redundant if p not in borrowed])
+                pool.free(
+                    [p for p in state.page_table[page_count:] if p not in borrowed]
+                )
+            else:
+                pool.free([p for p in state.page_table if p not in borrowed])
+        finally:
+            cache.dec_lock_ref(state.cache_node)
+            state.cache_node = None
