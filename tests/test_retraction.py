@@ -202,6 +202,44 @@ def test_retract_paged_state_frees_owned_pages_and_keeps_cache_pages_resident():
     assert engine.paged_prefill_input_ids(req) == req.input_ids + req.output_ids
 
 
+def test_mid_chunked_prefill_retraction_requeues_and_restarts_at_zero():
+    engine = Engine.__new__(Engine)
+    engine.pool = _pool()
+    engine.radix_cache = None
+    engine._paged_state = {}
+    engine._paged_replay_prefixes = {}
+
+    scheduler = Scheduler(engine, max_running=1, mode="paged", prefill_chunk_size=4)
+    req = _request("partial-prefill", prompt_len=12)
+    pages = engine.pool.allocate(3)
+    state = engine._state(req)
+    state.page_table = list(pages)
+    state.cache_seq_len = 4
+    state.prefill_offset = 4
+    state.prefill_target = 12
+    scheduler.prefilling = [req]
+
+    scheduler._retract_request(req, reason="mid-chunked-prefill test")
+
+    assert scheduler.prefilling == []
+    assert scheduler.running == []
+    assert list(scheduler.waiting) == [req]
+    assert req.status is RequestStatus.WAITING
+    assert all(page in engine.pool._free for page in pages)
+    assert state.page_table == []
+    assert state.cache_seq_len == 0
+    assert state.prefill_offset == 0
+    assert state.prefill_target == 0
+
+    scheduler.waiting.popleft()
+    engine.prepare_paged_prefill(req)
+
+    assert state.page_table
+    assert state.cache_seq_len == 0
+    assert state.prefill_offset == 0
+    assert state.prefill_target == len(req.input_ids)
+
+
 def test_decode_oom_retracts_and_reprefills_visible_prefix(caplog):
     engine = FakeRetractionEngine()
     scheduler = Scheduler(engine, max_running=2, mode="paged", prefill_chunk_size=0)

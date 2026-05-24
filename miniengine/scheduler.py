@@ -63,6 +63,8 @@ def _select_retraction_victim(
         req, state = item
         pages_held = len(getattr(state, "page_table", []))
         remaining_budget = req.sampling_params.max_new_tokens - req.num_output_tokens
+        # max() intentionally picks the most-recently-arrived final tie so
+        # older FCFS requests are protected from avoidable retraction.
         return pages_held, remaining_budget, req.arrival_time
 
     return max(eligible, key=key)[0]
@@ -421,6 +423,8 @@ class Scheduler:
 
     def _paged_decode_with_retraction(self) -> list[tuple[Request, int]]:
         """Decode running requests, retracting victims on decode-time OOM."""
+        retractions = 0
+        max_retractions = len(self.running) + len(self.prefilling)
         while self.running:
             batch = list(self.running)
             try:
@@ -435,6 +439,15 @@ class Scheduler:
                 if victim is None:
                     raise
                 self._retract_request(victim, reason=str(exc))
+                retractions += 1
+                if retractions > max_retractions:
+                    logger.error(
+                        "[retract] exhausted decode batch without satisfying "
+                        "allocation  retractions=%d  reason=%s",
+                        retractions,
+                        exc,
+                    )
+                    raise
 
         return []
 

@@ -592,6 +592,10 @@ class Engine:
         output tokens, its next prefill replays prompt + emitted output so
         generation resumes from the same visible prefix.
 
+        Unlike ``free_paged_state``/``pop_paged_state``, retraction leaves
+        an empty state entry behind because the same Request will re-enter
+        scheduler admission and rebuild its page table.
+
         Returns:
             Number of pool-owned pages freed.
         """
@@ -609,7 +613,7 @@ class Engine:
             return 0
 
         pages_freed = 0
-        if self.radix_cache is not None:
+        if self.radix_cache is not None and s.cache_node is not None:
             self.radix_cache.dec_lock_ref(s.cache_node)
 
         if s.page_table and self.pool is not None:
