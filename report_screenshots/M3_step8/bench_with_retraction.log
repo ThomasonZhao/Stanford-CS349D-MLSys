@@ -1,0 +1,18 @@
+model=Qwen/Qwen3-4B-Instruct-2507
+warming cache...
+warmup ok=True out=128 error=None
+cache_after_warmup={'enabled': True, 'hit_rate': 0.0, 'total_lookups': 1, 'total_query_tokens': 2995, 'total_hit_tokens': 0, 'total_inserted_pages': 97, 'total_evicted_pages': 0, 'num_cached_pages': 97, 'num_evictable_pages': 97, 'pool_num_free': 113, 'pool_num_evictable': 97}
+[000] ok out=512 elapsed=25.6s error=None
+[005] ok out=512 elapsed=25.7s error=None
+[004] ok out=512 elapsed=25.7s error=None
+[007] ok out=512 elapsed=25.7s error=None
+[009] ok out=512 elapsed=25.7s error=None
+[008] ok out=512 elapsed=25.7s error=None
+[011] ok out=512 elapsed=26.9s error=None
+[010] ok out=512 elapsed=29.7s error=None
+[006] ok out=512 elapsed=32.5s error=None
+[002] ok out=512 elapsed=33.9s error=None
+[001] ok out=512 elapsed=35.3s error=None
+[003] ok out=512 elapsed=36.6s error=None
+cache_after_stress={'enabled': True, 'hit_rate': 0.8868242482342817, 'total_lookups': 259, 'total_query_tokens': 865795, 'total_hit_tokens': 767808, 'total_inserted_pages': 289, 'total_evicted_pages': 80, 'num_cached_pages': 209, 'num_evictable_pages': 209, 'pool_num_free': 1, 'pool_num_evictable': 209}
+summary ok=12/12 errors=0 output_tokens=6144 elapsed=36.6s tok_s=167.8

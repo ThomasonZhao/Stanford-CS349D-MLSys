@@ -1,0 +1,30 @@
+  Server      : http://127.0.0.1:8000
+  Workload    : multiturn
+  Sessions    : 16
+  Turns       : 8
+  Concurrency : 4
+  Max tokens  : 4
+
+================================================================
+  Workload          : multiturn
+  Requests          : 128
+  Wall time         : 15.72 s
+  Throughput        :   8.14 req/s
+  Gen tok/s         :     33
+  TTFT p50 / p99    :   237 ms /   883 ms
+  Latency p50 / p99 :   458 ms /  1114 ms
+  Prompt tokens     : 27634
+  Cache-hit tokens  : 20896
+  Cache hit rate    : 75.6%
+================================================================
+
+  Per-turn breakdown:
+    turn   N   prompt_tok    hit_tok   hit_rate   TTFT_p50
+       0   16        2282          0      0.0%      359 ms
+       1   16        2614       2048     78.3%      234 ms
+       2   16        2948       2304     78.2%      234 ms
+       3   16        3287       2560     77.9%      245 ms
+       4   16        3621       3072     84.8%      235 ms
+       5   16        3954       3232     81.7%      237 ms
+       6   16        4294       3584     83.5%      239 ms
+       7   16        4634       4096     88.4%      234 ms

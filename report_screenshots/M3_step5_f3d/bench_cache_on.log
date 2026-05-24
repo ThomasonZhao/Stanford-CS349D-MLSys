@@ -1,0 +1,34 @@
+  Server      : http://127.0.0.1:8000
+  Workload    : shared
+  Groups      : 10
+  Qs/group    : 10
+  Prefix len  : ~2000 tokens
+  Question len: ~<bare> tokens
+  Concurrency : 2
+  Max tokens  : 64
+
+================================================================
+  Workload          : shared
+  Requests          : 100
+  Wall time         : 50.63 s
+  Throughput        :   1.98 req/s
+  Gen tok/s         :     34
+  TTFT p50 / p99    :    89 ms /  1586 ms
+  Latency p50 / p99 :   809 ms /  2335 ms
+  Prompt tokens     : 233290
+  Cache-hit tokens  : 184320
+  Cache hit rate    : 79.0%
+================================================================
+
+  Per-group breakdown:
+     grp  label                          N   prompt_tok    hit_tok   hit_rate   TTFT_p50
+       0  group_0                        10       23320      18432     79.0%      132 ms
+       1  group_1                        10       23330      18432     79.0%       89 ms
+       2  group_2                        10       23330      18432     79.0%       89 ms
+       3  group_3                        10       23330      18432     79.0%       88 ms
+       4  group_4                        10       23330      18432     79.0%       90 ms
+       5  group_5                        10       23330      18432     79.0%       89 ms
+       6  group_6                        10       23330      18432     79.0%       89 ms
+       7  group_7                        10       23330      18432     79.0%       90 ms
+       8  group_8                        10       23330      18432     79.0%       90 ms
+       9  group_9                        10       23330      18432     79.0%       89 ms

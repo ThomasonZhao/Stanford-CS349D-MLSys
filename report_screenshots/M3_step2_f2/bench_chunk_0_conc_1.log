@@ -1,0 +1,38 @@
+
+============================================================
+  Serving Benchmark
+  Server       : http://127.0.0.1:8000
+  Model        : Qwen/Qwen3-8B
+  Load mode    : closed-loop
+  Requests     : 8 per level
+  Input len    : 4096
+  Output len   : 512
+  Randomness   : 1.0
+  Concurrencies: [1]
+============================================================
+
+  Loading tokenizer...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Loading WildChat prompts...
+  Loaded 40 candidate prompts
+  Preparing 8 requests...
+  Input lengths:  min=4098, max=4105, mean=4102
+  Output lengths: min=512, max=512, mean=512
+
+  Running concurrency=1 (8 requests, closed-loop)...
+    [  1/8] ok in=4105 out=512 ttft=45037ms compl=101165ms (elapsed 101.2s)
+    [  2/8] ok in=4098 out=512 ttft=1524ms compl=36542ms (elapsed 137.7s)
+    [  3/8] ok in=4105 out=512 ttft=127ms compl=35147ms (elapsed 172.9s)
+    [  4/8] ok in=4098 out=512 ttft=1551ms compl=36604ms (elapsed 209.5s)
+    [  5/8] ok in=4105 out=512 ttft=1554ms compl=36630ms (elapsed 246.1s)
+    [  6/8] ok in=4105 out=512 ttft=1556ms compl=36574ms (elapsed 282.7s)
+    [  7/8] ok in=4098 out=512 ttft=1558ms compl=36610ms (elapsed 319.3s)
+    [  8/8] ok in=4105 out=512 ttft=1564ms compl=36600ms (elapsed 355.9s)
+  conc=1      TTFT p50=   1555ms  p99=  41994ms  Compl p50=  36602ms  p99=  96648ms  GenTok/s=     12  ok=8
+
+====================================================================================================
+  Conc   TTFT_p50   TTFT_p99  Compl_p50  Compl_p99   TPOT_p50   TPOT_p99   GenTok/s    OK
+        (ms)       (ms)        (ms)        (ms)        (ms)        (ms)
+----------------------------------------------------------------------------------------------------
+     1       1555      41994      36602      96648       68.6      107.0         12     8
+====================================================================================================

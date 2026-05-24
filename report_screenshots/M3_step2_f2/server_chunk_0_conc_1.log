@@ -1,0 +1,95 @@
+19:38:00 INFO     miniengine  Initializing engine  model=Qwen/Qwen3-8B  dtype=float16  mode=paged
+19:38:00 INFO     miniengine.engine  Loading tokenizer from Qwen/Qwen3-8B …
+19:38:00 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+19:38:00 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+19:38:00 INFO     httpx  HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+19:38:00 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+19:38:00 WARNING  huggingface_hub.utils._http  Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+19:38:00 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/tokenizer_config.json "HTTP/1.1 200 OK"
+19:38:00 INFO     httpx  HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/tokenizer_config.json "HTTP/1.1 200 OK"
+19:38:00 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+19:38:00 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+19:38:00 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/vocab.json "HTTP/1.1 307 Temporary Redirect"
+19:38:00 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/vocab.json "HTTP/1.1 200 OK"
+19:38:00 INFO     httpx  HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/vocab.json "HTTP/1.1 200 OK"
+19:38:01 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/merges.txt "HTTP/1.1 307 Temporary Redirect"
+19:38:01 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/merges.txt "HTTP/1.1 200 OK"
+19:38:01 INFO     httpx  HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/merges.txt "HTTP/1.1 200 OK"
+19:38:01 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/tokenizer.json "HTTP/1.1 302 Found"
+19:38:01 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/xet-read-token/b968826d9c46dd6066d109eabc6255188de91218 "HTTP/1.1 200 OK"
+19:38:02 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/added_tokens.json "HTTP/1.1 404 Not Found"
+19:38:03 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/special_tokens_map.json "HTTP/1.1 404 Not Found"
+19:38:03 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/chat_template.jinja "HTTP/1.1 404 Not Found"
+19:38:03 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B "HTTP/1.1 200 OK"
+19:38:03 INFO     miniengine.engine  Loading model config from Qwen/Qwen3-8B …
+19:38:04 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+19:38:04 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+19:38:04 INFO     miniengine.engine  Config: layers=36, hidden=4096, heads=32, kv_heads=8, head_dim=128, intermediate=12288, vocab=151936, tie_embed=False
+19:38:06 INFO     miniengine.model  Downloading / locating model files for Qwen/Qwen3-8B …
+19:38:06 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/revision/main "HTTP/1.1 200 OK"
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/model-00001-of-00005.safetensors "HTTP/1.1 302 Found"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/model-00002-of-00005.safetensors "HTTP/1.1 302 Found"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/model-00003-of-00005.safetensors "HTTP/1.1 302 Found"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/generation_config.json "HTTP/1.1 200 OK"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/model-00005-of-00005.safetensors "HTTP/1.1 302 Found"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/model.safetensors.index.json "HTTP/1.1 307 Temporary Redirect"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/b968826d9c46dd6066d109eabc6255188de91218/model-00004-of-00005.safetensors "HTTP/1.1 302 Found"
+19:38:06 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/model.safetensors.index.json "HTTP/1.1 200 OK"
+19:38:06 INFO     httpx  HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/generation_config.json "HTTP/1.1 200 OK"
+Fetching 11 files:  18%|█▊        | 2/11 [00:00<00:00,  9.46it/s]19:38:06 INFO     httpx  HTTP Request: GET https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/model.safetensors.index.json "HTTP/1.1 200 OK"
+Fetching 11 files:  27%|██▋       | 3/11 [02:03<06:51, 51.46s/it]Fetching 11 files:  36%|███▋      | 4/11 [02:03<03:46, 32.35s/it]Fetching 11 files: 100%|██████████| 11/11 [02:03<00:00, 11.26s/it]
+19:40:10 INFO     miniengine.model  Loading 5 safetensors shard(s) …
+19:40:18 INFO     miniengine.model  Weights loaded — 8190735360 parameters on cuda (torch.float16)
+19:40:18 INFO     miniengine.engine  mem-fraction-static=0.85 → static budget=20.1 GB, weights/etc used=17.2 GB → KV pool=2.9 GB
+19:40:18 INFO     miniengine.kv_memory_pool  KVMemoryPool: 613 pages × 32 tokens (2.89 GB total, 612 usable pages)
+19:40:18 INFO     miniengine.engine  Radix prefix cache enabled
+2026-05-24 19:40:19,410 - INFO - flashinfer.jit: Prebuilt kernels not found, using JIT backend
+19:40:19 INFO     miniengine.engine  flashinfer backend ready (workspace=128 MB, page_size=32)
+19:40:19 INFO     miniengine.engine  Engine ready  —  mode=paged, backend=flashinfer, compile=False, graph=False, vocab=151669, stop_ids={151643, 151645}, params=8190M
+19:40:19 INFO     miniengine.scheduler  Scheduler started
+19:40:19 INFO     miniengine  Starting server on 127.0.0.1:8000
+INFO:     Started server process [3840]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:43890 - "GET /v1/models HTTP/1.1" 200 OK
+19:40:48 INFO     miniengine.scheduler  Enqueued request 7a98d9e9-e766-460a-ad49-8f8bd9d57057  (prompt_len=4105, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+2026-05-24 19:40:48,511 - INFO - flashinfer.jit: Loading JIT ops: batch_prefill_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False_f16qk_False
+2026-05-24 19:41:11,491 - INFO - flashinfer.jit: Finished loading JIT ops: batch_prefill_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False_f16qk_False
+2026-05-24 19:41:11,856 - INFO - flashinfer.jit: Loading JIT ops: page
+2026-05-24 19:41:31,852 - INFO - flashinfer.jit: Finished loading JIT ops: page
+19:41:33 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4105 (0.0%) running_pages=129 cache_pages=0 evictable=0 free=483
+2026-05-24 19:41:33,369 - INFO - flashinfer.jit: Loading JIT ops: batch_decode_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False
+2026-05-24 19:41:54,418 - INFO - flashinfer.jit: Finished loading JIT ops: batch_decode_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False
+19:42:29 INFO     miniengine.scheduler  Finished request 7a98d9e9-e766-460a-ad49-8f8bd9d57057  (output_len=512, running=1, waiting=0)
+19:42:29 INFO     miniengine.scheduler  Enqueued request 1dd1b2cc-d448-4745-a846-206782f8ada6  (prompt_len=4098, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:42:31 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4098 (0.0%) running_pages=129 cache_pages=144 evictable=144 free=339
+19:43:06 INFO     miniengine.scheduler  Finished request 1dd1b2cc-d448-4745-a846-206782f8ada6  (output_len=512, running=1, waiting=0)
+19:43:06 INFO     miniengine.scheduler  Enqueued request 50eaf0df-6499-4a6e-9a8a-3fa52f49fd47  (prompt_len=4105, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:43:06 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=4096/4105 (99.8%) running_pages=129 cache_pages=288 evictable=144 free=323
+19:43:41 INFO     miniengine.scheduler  Finished request 50eaf0df-6499-4a6e-9a8a-3fa52f49fd47  (output_len=512, running=1, waiting=0)
+19:43:41 INFO     miniengine.scheduler  Enqueued request 91ed0482-1184-4fcc-a0db-5cb3794e40e7  (prompt_len=4098, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:43:42 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4098 (0.0%) running_pages=129 cache_pages=288 evictable=288 free=195
+19:44:17 INFO     miniengine.scheduler  Finished request 91ed0482-1184-4fcc-a0db-5cb3794e40e7  (output_len=512, running=1, waiting=0)
+19:44:17 INFO     miniengine.scheduler  Enqueued request 61b791db-3c47-42cc-8a49-8f8a3f14bc98  (prompt_len=4105, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:44:19 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4105 (0.0%) running_pages=129 cache_pages=432 evictable=432 free=51
+19:44:54 INFO     miniengine.scheduler  Finished request 61b791db-3c47-42cc-8a49-8f8a3f14bc98  (output_len=512, running=1, waiting=0)
+19:44:54 INFO     miniengine.scheduler  Enqueued request eff6d757-4397-4670-a470-b6201c6eb773  (prompt_len=4105, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:44:55 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4105 (0.0%) running_pages=129 cache_pages=432 evictable=432 free=51
+19:45:30 INFO     miniengine.scheduler  Finished request eff6d757-4397-4670-a470-b6201c6eb773  (output_len=512, running=1, waiting=0)
+19:45:31 INFO     miniengine.scheduler  Enqueued request 24b63520-34f5-4ec1-88ec-615b4f8d66e4  (prompt_len=4098, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:45:32 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4098 (0.0%) running_pages=129 cache_pages=432 evictable=432 free=51
+19:46:07 INFO     miniengine.scheduler  Finished request 24b63520-34f5-4ec1-88ec-615b4f8d66e4  (output_len=512, running=1, waiting=0)
+19:46:07 INFO     miniengine.scheduler  Enqueued request 72abbc45-7825-428e-8a52-af8e08a10acd  (prompt_len=4105, waiting=1)
+INFO:     127.0.0.1:39866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+19:46:09 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/4105 (0.0%) running_pages=129 cache_pages=432 evictable=432 free=51
+19:46:44 INFO     miniengine.scheduler  Finished request 72abbc45-7825-428e-8a52-af8e08a10acd  (output_len=512, running=1, waiting=0)

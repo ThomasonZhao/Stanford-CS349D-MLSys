@@ -1,0 +1,4 @@
+model=Qwen/Qwen3-4B-Instruct-2507
+warming cache...
+warmup ok=True out=128 error=None
+cache_after_warmup={'enabled': True, 'hit_rate': 0.0, 'total_lookups': 1, 'total_query_tokens': 2995, 'total_hit_tokens': 0, 'total_inserted_pages': 97, 'total_evicted_pages': 0, 'num_cached_pages': 97, 'num_evictable_pages': 97, 'pool_num_free': 113, 'pool_num_evictable': 97}
