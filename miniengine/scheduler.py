@@ -22,9 +22,50 @@ import time
 from collections import deque
 
 from miniengine.core import Request, RequestStatus, TokenOutput
-from miniengine.engine import Engine
+from miniengine.engine import Engine, PagedDecodeOOM
 
 logger = logging.getLogger(__name__)
+
+
+def _select_retraction_victim(
+    candidates: list[Request],
+    states: dict[str, object],
+    preferred_request_id: str | None = None,
+    exclude_request_ids: set[str] | None = None,
+) -> Request | None:
+    """Choose a request to retract.
+
+    Heuristic: if decode page growth identified the failing request, retract
+    it first.  Otherwise free the most pages possible; ties pick the request
+    with the largest remaining output budget, then the youngest arrival.
+    """
+    excluded = exclude_request_ids or set()
+    eligible: list[tuple[Request, object]] = []
+    for req in candidates:
+        if req.request_id in excluded or req.status is RequestStatus.FINISHED:
+            continue
+        state = states.get(req.request_id)
+        if state is None:
+            continue
+        if len(getattr(state, "page_table", [])) == 0:
+            continue
+        eligible.append((req, state))
+
+    if preferred_request_id is not None:
+        for req, _ in eligible:
+            if req.request_id == preferred_request_id:
+                return req
+
+    if not eligible:
+        return None
+
+    def key(item: tuple[Request, object]) -> tuple[int, int, float]:
+        req, state = item
+        pages_held = len(getattr(state, "page_table", []))
+        remaining_budget = req.sampling_params.max_new_tokens - req.num_output_tokens
+        return pages_held, remaining_budget, req.arrival_time
+
+    return max(eligible, key=key)[0]
 
 
 class Scheduler:
@@ -224,7 +265,8 @@ class Scheduler:
                     and len(self.running) + len(to_prefill) < self.max_running
                 ):
                     req = self.waiting[0]
-                    if pool.num_free < pool.pages_needed(len(req.input_ids)):
+                    prefill_len = len(self._paged_prefill_input_ids(req))
+                    if pool.num_free < pool.pages_needed(prefill_len):
                         break  # can't fit; wait for pages to free
                     to_prefill.append(self.waiting.popleft())
         else:
@@ -258,9 +300,8 @@ class Scheduler:
 
         # ── Phase 2: paged batched decode ───────────────────────────────
         if self.running:
-            token_ids = self.engine.paged_batched_decode(self.running)
             still_running: list[Request] = []
-            for req, token_id in zip(self.running, token_ids):
+            for req, token_id in self._paged_decode_with_retraction():
                 req.output_ids.append(token_id)
                 self._stream_token(req, token_id)
                 if self._check_finished(req, token_id):
@@ -297,7 +338,8 @@ class Scheduler:
                     < self.max_running
                 ):
                     req = self.waiting[0]
-                    need = pool.pages_needed(len(req.input_ids))
+                    prefill_len = len(self._paged_prefill_input_ids(req))
+                    need = pool.pages_needed(prefill_len)
                     if pool.num_free - planned_pages < need:
                         break  # head-of-line request waits for full prompt capacity
                     planned_pages += need
@@ -357,9 +399,8 @@ class Scheduler:
 
         # ── Phase 3: paged batched decode ───────────────────────────────
         if self.running:
-            token_ids = self.engine.paged_batched_decode(self.running)
             still_running: list[Request] = []
-            for req, token_id in zip(self.running, token_ids):
+            for req, token_id in self._paged_decode_with_retraction():
                 req.output_ids.append(token_id)
                 self._stream_token(req, token_id)
                 if self._check_finished(req, token_id):
@@ -371,6 +412,53 @@ class Scheduler:
         return finished
 
     # ── Helpers ─────────────────────────────────────────────────────────
+
+    def _paged_prefill_input_ids(self, req: Request) -> list[int]:
+        fn = getattr(self.engine, "paged_prefill_input_ids", None)
+        if fn is None:
+            return req.input_ids
+        return fn(req)
+
+    def _paged_decode_with_retraction(self) -> list[tuple[Request, int]]:
+        """Decode running requests, retracting victims on decode-time OOM."""
+        while self.running:
+            batch = list(self.running)
+            try:
+                token_ids = self.engine.paged_batched_decode(batch)
+                return list(zip(batch, token_ids))
+            except PagedDecodeOOM as exc:
+                victim = _select_retraction_victim(
+                    self.running + self.prefilling,
+                    getattr(self.engine, "_paged_state", {}),
+                    preferred_request_id=exc.request_id,
+                )
+                if victim is None:
+                    raise
+                self._retract_request(victim, reason=str(exc))
+
+        return []
+
+    def _retract_request(self, req: Request, reason: str) -> None:
+        """Move a paged request back to waiting after freeing its KV pages."""
+        was_running = req in self.running
+        was_prefilling = req in self.prefilling
+        if not was_running and not was_prefilling:
+            return
+
+        pages_freed = self.engine.retract_paged_state(req)
+        self.running = [r for r in self.running if r is not req]
+        self.prefilling = [r for r in self.prefilling if r is not req]
+        req.status = RequestStatus.WAITING
+
+        with self._lock:
+            self.waiting.appendleft(req)
+
+        logger.info(
+            "[retract] victim=%s pages_freed=%d reason=%s",
+            req.request_id,
+            pages_freed,
+            reason,
+        )
 
     def _prepare_paged_prefill_for_admission(self, req: Request) -> None:
         """Reserve paged KV for a newly admitted request, applying cache hits."""
@@ -385,25 +473,27 @@ class Scheduler:
         if state.page_table:
             raise RuntimeError(f"request {req.request_id} already has paged KV state")
 
+        prefill_ids = self._paged_prefill_input_ids(req)
+        prefill_len = len(prefill_ids)
         # The cache stores K/V, not the logits needed to sample the first
         # generated token, so prefill must recompute at least one prompt token.
-        max_hit_tokens = max(0, (len(req.input_ids) - 1) // pool.page_size)
+        max_hit_tokens = max(0, (prefill_len - 1) // pool.page_size)
         max_hit_tokens *= pool.page_size
-        result = cache.match_prefix(req.input_ids, max_tokens=max_hit_tokens)
+        result = cache.match_prefix(prefill_ids, max_tokens=max_hit_tokens)
         hit_tokens = result.matched_tokens
         cached_pages = result.matched_pages
 
-        req.cache_hit_tokens = hit_tokens
+        req.cache_hit_tokens = min(hit_tokens, len(req.input_ids))
         state.cache_hit_pages = list(cached_pages)
         state.cache_node = result.last_node if hit_tokens > 0 else None
         state.cache_seq_len = hit_tokens
         state.prefill_offset = hit_tokens
-        state.prefill_target = len(req.input_ids)
+        state.prefill_target = prefill_len
 
         if state.cache_node is not None:
             cache.inc_lock_ref(state.cache_node)
 
-        fresh_needed = pool.pages_needed(len(req.input_ids)) - len(cached_pages)
+        fresh_needed = pool.pages_needed(prefill_len) - len(cached_pages)
         try:
             fresh_pages = pool.allocate(fresh_needed)
         except RuntimeError:
@@ -424,10 +514,14 @@ class Scheduler:
             return
         pool = self.engine.pool
         assert pool is not None
-        query_tokens = sum(len(req.input_ids) for req in batch)
+        states = getattr(self.engine, "_paged_state", {})
+        query_tokens = sum(
+            getattr(states.get(req.request_id), "prefill_target", 0)
+            or len(self._paged_prefill_input_ids(req))
+            for req in batch
+        )
         hit_tokens = sum(req.cache_hit_tokens for req in batch)
         pct = (100.0 * hit_tokens / query_tokens) if query_tokens else 0.0
-        states = getattr(self.engine, "_paged_state", {})
         running_pages = sum(len(s.page_table) for s in states.values())
         logger.info(
             "[cache] batch=%d hit_tokens=%d/%d (%.1f%%) "

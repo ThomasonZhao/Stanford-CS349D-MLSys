@@ -64,6 +64,26 @@ class _PagedState:
         return self.prefill_offset >= self.prefill_target
 
 
+class PagedDecodeOOM(RuntimeError):
+    """Decode-time page growth failed after cache eviction was attempted."""
+
+    def __init__(
+        self,
+        request_id: str,
+        requested_pages: int,
+        cache_seq_len: int,
+        cause: RuntimeError,
+    ) -> None:
+        super().__init__(
+            "decode KV page allocation failed for "
+            f"{request_id}: requested={requested_pages} "
+            f"cache_seq_len={cache_seq_len}: {cause}"
+        )
+        self.request_id = request_id
+        self.requested_pages = requested_pages
+        self.cache_seq_len = cache_seq_len
+
+
 class Engine:
     """Model wrapper supporting baseline / batched / paged decode.
 
@@ -154,6 +174,7 @@ class Engine:
         self.max_position = max_position
         self._kv_pool_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None
         self._paged_state: dict[str, _PagedState] = {}
+        self._paged_replay_prefixes: dict[str, list[int]] = {}
         self._fi_workspace: torch.Tensor | None = None
         self._fi_prefill_wrapper = None
         self._fi_decode_wrapper = None
@@ -531,8 +552,23 @@ class Engine:
             self._paged_state[req.request_id] = s
         return s
 
+    def paged_prefill_input_ids(self, req: Request) -> list[int]:
+        """Tokens to prefill for a request in paged mode.
+
+        Normally this is just the prompt.  After decode-time retraction,
+        the request has already streamed some output tokens, so replay the
+        prompt plus those outputs exactly once to rebuild the lost KV state.
+        """
+        return getattr(self, "_paged_replay_prefixes", {}).get(
+            req.request_id, req.input_ids
+        )
+
+    def _clear_paged_replay_prefix(self, req: Request) -> None:
+        getattr(self, "_paged_replay_prefixes", {}).pop(req.request_id, None)
+
     def free_paged_state(self, req: Request) -> None:
         """Release a request's pages back to the pool."""
+        self._clear_paged_replay_prefix(req)
         s = self._paged_state.pop(req.request_id, None)
         if s is None:
             return
@@ -545,19 +581,63 @@ class Engine:
 
     def pop_paged_state(self, req: Request) -> _PagedState | None:
         """Remove paged bookkeeping without returning any pages."""
+        self._clear_paged_replay_prefix(req)
         return self._paged_state.pop(req.request_id, None)
+
+    def retract_paged_state(self, req: Request) -> int:
+        """Free a request's live KV pages and prepare it for re-prefill.
+
+        Borrowed radix-cache pages are only unlocked.  Fresh pages owned by
+        this request return to the pool.  If the request has already emitted
+        output tokens, its next prefill replays prompt + emitted output so
+        generation resumes from the same visible prefix.
+
+        Returns:
+            Number of pool-owned pages freed.
+        """
+        replay_prefix = list(req.input_ids)
+        if req.output_ids:
+            replay_prefix.extend(req.output_ids)
+            if not hasattr(self, "_paged_replay_prefixes"):
+                self._paged_replay_prefixes = {}
+            self._paged_replay_prefixes[req.request_id] = replay_prefix
+        else:
+            self._clear_paged_replay_prefix(req)
+
+        s = self._paged_state.get(req.request_id)
+        if s is None:
+            return 0
+
+        pages_freed = 0
+        if self.radix_cache is not None:
+            self.radix_cache.dec_lock_ref(s.cache_node)
+
+        if s.page_table and self.pool is not None:
+            borrowed = set(s.cache_hit_pages)
+            owned_pages = [p for p in s.page_table if p not in borrowed]
+            self.pool.free(owned_pages)
+            pages_freed = len(owned_pages)
+
+        s.page_table = []
+        s.cache_seq_len = 0
+        s.prefill_offset = 0
+        s.prefill_target = 0
+        s.cache_node = None
+        s.cache_hit_pages = []
+        return pages_freed
 
     def prepare_paged_prefill(self, req: Request) -> None:
         """Allocate all prompt KV pages and initialize chunked prefill state."""
         assert self.pool is not None
         s = self._state(req)
+        prefill_ids = self.paged_prefill_input_ids(req)
         if s.page_table:
-            if s.prefill_target == len(req.input_ids):
+            if s.prefill_target == len(prefill_ids):
                 assert 0 <= s.prefill_offset <= s.prefill_target
                 assert 0 <= s.cache_seq_len <= s.prefill_target
                 return
             raise RuntimeError(f"request {req.request_id} already has paged KV state")
-        prompt_len = len(req.input_ids)
+        prompt_len = len(prefill_ids)
         s.page_table = self.pool.allocate(self.pool.pages_needed(prompt_len))
         s.cache_seq_len = 0
         s.prefill_offset = 0
@@ -572,19 +652,20 @@ class Engine:
             return []
         assert self.pool is not None
         states = [self._state(r) for r in requests]
-        for r, s in zip(requests, states):
+        prefill_ids_by_req = [self.paged_prefill_input_ids(r) for r in requests]
+        for r, s, prefill_ids in zip(requests, states, prefill_ids_by_req):
             if not s.page_table:
                 s.page_table = self.pool.allocate(
-                    self.pool.pages_needed(len(r.input_ids))
+                    self.pool.pages_needed(len(prefill_ids))
                 )
                 s.prefill_offset = 0
-                s.prefill_target = len(r.input_ids)
+                s.prefill_target = len(prefill_ids)
                 s.cache_seq_len = 0
             elif s.prefill_target == 0:
-                s.prefill_target = len(r.input_ids)
+                s.prefill_target = len(prefill_ids)
 
         starts = [s.prefill_offset for s in states]
-        ends = [len(r.input_ids) for r in requests]
+        ends = [len(prefill_ids) for prefill_ids in prefill_ids_by_req]
         chunk_lens = [end - start for start, end in zip(starts, ends)]
         if any(q_len <= 0 for q_len in chunk_lens):
             raise RuntimeError(
@@ -597,8 +678,8 @@ class Engine:
 
         flat_ids = [
             token_id
-            for r, start, end in zip(requests, starts, ends)
-            for token_id in r.input_ids[start:end]
+            for prefill_ids, start, end in zip(prefill_ids_by_req, starts, ends)
+            for token_id in prefill_ids[start:end]
         ]
         flat_pos = [p for start, end in zip(starts, ends) for p in range(start, end)]
         input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
@@ -626,6 +707,7 @@ class Engine:
             s.cache_seq_len = n
             s.prefill_offset = n
             s.prefill_target = n
+            self._clear_paged_replay_prefix(r)
             out.append(
                 sample_token(logits[0, i : i + 1], r.sampling_params, r.output_ids)
             )
@@ -664,13 +746,17 @@ class Engine:
         if not active:
             return out
 
+        prefill_ids_by_id = {
+            req.request_id: self.paged_prefill_input_ids(req)
+            for _, req, _, _, _ in active
+        }
         chunk_lens = [end - start for _, _, _, start, end in active]
         kv_lens = [end for _, _, _, _, end in active]
 
         flat_ids = [
             token_id
             for _, req, _, start, end in active
-            for token_id in req.input_ids[start:end]
+            for token_id in prefill_ids_by_id[req.request_id][start:end]
         ]
         flat_pos = [
             pos for _, _, _, start, end in active for pos in range(start, end)
@@ -722,6 +808,7 @@ class Engine:
             s.prefill_offset = end
 
         for i, (out_idx, req) in enumerate(final_entries):
+            self._clear_paged_replay_prefix(req)
             out[out_idx] = sample_token(
                 logits[0, i : i + 1], req.sampling_params, req.output_ids
             )
@@ -930,10 +1017,19 @@ class Engine:
         states = [self._state(r) for r in requests]
 
         # Grow page tables if cache_seq_len + 1 outgrows the current allocation.
-        for s in states:
+        for req, s in zip(requests, states):
             need = self.pool.pages_needed(s.cache_seq_len + 1)
             if need > len(s.page_table):
-                s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                requested_pages = need - len(s.page_table)
+                try:
+                    s.page_table.extend(self.pool.allocate(requested_pages))
+                except RuntimeError as exc:
+                    raise PagedDecodeOOM(
+                        request_id=req.request_id,
+                        requested_pages=requested_pages,
+                        cache_seq_len=s.cache_seq_len,
+                        cause=exc,
+                    ) from exc
 
         max_pages = max(len(s.page_table) for s in states)
         if self.graph_runner is not None and self.graph_runner.can_handle(
