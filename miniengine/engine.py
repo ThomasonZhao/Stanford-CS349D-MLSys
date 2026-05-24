@@ -320,6 +320,11 @@ class Engine:
 
         if not torch.cuda.is_available():
             raise RuntimeError("paged mode requires a CUDA device")
+        # Release torch's allocator cache (intermediate buffers from weight
+        # loading) so mem_get_info reflects what's actually held, not what
+        # torch is caching for reuse.  Without this, ``used`` overestimates
+        # by several GB on newer torch+CUDA stacks and KV pool sizes to 0.
+        torch.cuda.empty_cache()
         free, total = torch.cuda.mem_get_info()
         # weights are already allocated by this point, so total - free is a
         # close proxy for "everything else we've claimed so far".
