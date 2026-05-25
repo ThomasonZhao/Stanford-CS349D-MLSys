@@ -1,1 +1,1 @@
-{"enabled":true,"hit_rate":0.7571160236959977,"total_lookups":128,"total_query_tokens":27684,"total_hit_tokens":20960,"total_inserted_pages":164,"total_evicted_pages":0,"num_cached_pages":164,"num_evictable_pages":164,"pool_num_free":445,"pool_num_evictable":164}
+{"enabled":true,"hit_rate":0.7582719260222511,"total_lookups":128,"total_query_tokens":27684,"total_hit_tokens":20992,"total_inserted_pages":162,"total_evicted_pages":0,"num_cached_pages":162,"num_evictable_pages":162,"pool_num_free":447,"pool_num_evictable":162}
