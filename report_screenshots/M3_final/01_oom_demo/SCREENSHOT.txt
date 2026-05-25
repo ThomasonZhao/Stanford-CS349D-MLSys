@@ -1,0 +1,51 @@
+===== Milestone 3 Deliverable 01: OOM avoidance demo =====
+Workload: bench_serving --input-len 4096 --output-len 16 --concurrencies 8 --num-requests 8
+Server flags (both): --mem-fraction-static 0.96  (tight activation budget so chunking is needed)
+
+----- UNCHUNKED (--prefill-chunk-size 0): expected to OOM -----
+
+[server log excerpt - CUDA OOM]
+                        ^^^^^^^^
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 450.00 MiB. GPU 0 has a total capacity of 22.04 GiB of which 291.88 MiB is free. Process 2367624 has 21.73 GiB memory in use. Of the allocated memory 21.26 GiB is allocated by PyTorch, and 254.35 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+20:29:37 INFO     miniengine.scheduler  Finished request 55a1c57d-4c2c-4e29-8aa2-18fffcd770ab  (output_len=16, running=1, waiting=0)
+
+[bench client output]
+  Loading tokenizer...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Loading WildChat prompts...
+  Loaded 40 candidate prompts
+  Preparing 8 requests...
+  Input lengths:  min=4098, max=4105, mean=4102
+  Output lengths: min=16, max=16, mean=16
+
+  Running concurrency=8 (8 requests, closed-loop)...
+    [  1/8] ok in=4105 out=16 ttft=22150ms compl=33143ms (elapsed 33.1s)
+
+----- CHUNKED (--prefill-chunk-size 1024): completes successfully -----
+
+[bench client output - all 8 requests OK]
+  Loading tokenizer...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Loading WildChat prompts...
+  Loaded 40 candidate prompts
+  Preparing 8 requests...
+  Input lengths:  min=4098, max=4105, mean=4102
+  Output lengths: min=16, max=16, mean=16
+
+  Running concurrency=8 (8 requests, closed-loop)...
+    [  1/8] ok in=4105 out=16 ttft=11665ms compl=13107ms (elapsed 13.1s)
+    [  2/8] ok in=4098 out=16 ttft=11864ms compl=13193ms (elapsed 13.2s)
+    [  3/8] ok in=4105 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  4/8] ok in=4098 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  5/8] ok in=4105 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  6/8] ok in=4098 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  7/8] ok in=4105 out=16 ttft=11863ms compl=13194ms (elapsed 13.2s)
+    [  8/8] ok in=4105 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+  conc=8      TTFT p50=  11864ms  p99=  11864ms  Compl p50=  13194ms  p99=  13194ms  GenTok/s=     10  ok=8
+
+====================================================================================================
+  Conc   TTFT_p50   TTFT_p99  Compl_p50  Compl_p99   TPOT_p50   TPOT_p99   GenTok/s    OK
+        (ms)       (ms)        (ms)        (ms)        (ms)        (ms)
+----------------------------------------------------------------------------------------------------
+     8      11864      11864      13194      13194       88.7       95.6         10     8
+====================================================================================================

@@ -1,0 +1,33 @@
+===== Milestone 3 Deliverable 04: bench_cache shared, cache-on vs --disable-radix-cache =====
+Workload: --workload shared --num-groups 5 --questions-per-group 20 --shared-prefix-len 2000 --concurrency 4
+Server flags: --mem-fraction-static 0.85 --prefill-chunk-size 1024
+
+----- CACHE ON -----
+
+  Wall time         : 47.57 s
+  Throughput        :   2.10 req/s
+  Gen tok/s         :     34
+  TTFT p50 / p99    :   232 ms /  3455 ms
+  Latency p50 / p99 :  1283 ms /  4566 ms
+  Prompt tokens     : 233690
+  Cache-hit tokens  : 184320
+  Cache hit rate    : 78.9%
+================================================================
+
+----- CACHE OFF (--disable-radix-cache) -----
+
+  Wall time         : 108.81 s
+  Throughput        :   0.92 req/s
+  Gen tok/s         :     15
+  TTFT p50 / p99    :  3232 ms /  3442 ms
+  Latency p50 / p99 :  4345 ms /  4558 ms
+  Prompt tokens     : 233690
+  Cache-hit tokens  : 0
+  Cache hit rate    : 0.0%
+================================================================
+
+----- VERDICT -----
+Throughput speedup: 2.10 / 0.92 = 2.28x  (target >= 2x) ✓ PASS
+TTFT reduction:    3232 / 232 = 13.9x   (target >= 2x) ✓ PASS
+
+{"enabled":true,"hit_rate":0.7887372159698747,"total_lookups":100,"total_query_tokens":233690,"total_hit_tokens":184320,"total_inserted_pages":460,"total_evicted_pages":92,"num_cached_pages":368,"num_evictable_pages":368,"pool_num_free":241,"pool_num_evictable":368}

@@ -1,0 +1,56 @@
+===== Milestone 3 Deliverable 05: shared-prefix-len sweep (cache-on) =====
+Workload: --workload shared --num-groups 10 --questions-per-group 10 --concurrency 4
+Server flags: --mem-fraction-static 0.85 --prefill-chunk-size 1024
+
+Summary across prefix lengths {200, 500, 2000, 4000}:
+
+prefix       throughput      TTFT p50/p99 (ms)    cache hit rate 
+200          2.62 req/s      198 ms / 720 ms      56.2%          
+500          2.75 req/s      227 ms / 599 ms      74.0%          
+2000         1.66 req/s      235 ms / 3169 ms     64.6%          
+4000         0.53 req/s      875 ms / 6577 ms     59.5%          
+
+----- prefix=200 -----
+  Wall time         : 38.22 s
+  Throughput        :   2.62 req/s
+  Gen tok/s         :     44
+  TTFT p50 / p99    :   198 ms /   720 ms
+  Latency p50 / p99 :  1539 ms /  1931 ms
+  Prompt tokens     : 26690
+  Cache-hit tokens  : 15008
+  Cache hit rate    : 56.2%
+================================================================
+
+----- prefix=500 -----
+  Wall time         : 36.38 s
+  Throughput        :   2.75 req/s
+  Gen tok/s         :     43
+  TTFT p50 / p99    :   227 ms /   599 ms
+  Latency p50 / p99 :  1440 ms /  1723 ms
+  Prompt tokens     : 61190
+  Cache-hit tokens  : 45280
+  Cache hit rate    : 74.0%
+================================================================
+
+----- prefix=2000 -----
+  Wall time         : 60.06 s
+  Throughput        :   1.66 req/s
+  Gen tok/s         :     27
+  TTFT p50 / p99    :   235 ms /  3169 ms
+  Latency p50 / p99 :  1935 ms /  4438 ms
+  Prompt tokens     : 233690
+  Cache-hit tokens  : 150912
+  Cache hit rate    : 64.6%
+================================================================
+
+----- prefix=4000 -----
+  Wall time         : 188.21 s
+  Throughput        :   0.53 req/s
+  Gen tok/s         :     34
+  TTFT p50 / p99    :   875 ms /  6577 ms
+  Latency p50 / p99 :  6937 ms / 11584 ms
+  Prompt tokens     : 464690
+  Cache-hit tokens  : 276480
+  Cache hit rate    : 59.5%
+================================================================
+

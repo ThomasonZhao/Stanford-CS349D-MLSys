@@ -1,0 +1,253 @@
+21:24:27 INFO     miniengine  Initializing engine  model=Qwen/Qwen3-8B  dtype=float16  mode=paged
+21:24:27 INFO     miniengine.engine  Loading tokenizer from Qwen/Qwen3-8B …
+21:24:27 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+21:24:27 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+21:24:28 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+21:24:28 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/tokenizer_config.json "HTTP/1.1 200 OK"
+21:24:28 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+21:24:28 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+21:24:29 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B "HTTP/1.1 200 OK"
+21:24:29 INFO     miniengine.engine  Loading model config from Qwen/Qwen3-8B …
+21:24:29 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+21:24:29 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+21:24:29 INFO     miniengine.engine  Config: layers=36, hidden=4096, heads=32, kv_heads=8, head_dim=128, intermediate=12288, vocab=151936, tie_embed=False
+21:24:29 INFO     miniengine.model  Downloading / locating model files for Qwen/Qwen3-8B …
+21:24:29 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/revision/main "HTTP/1.1 200 OK"
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 46322.63it/s]
+21:24:29 INFO     miniengine.model  Loading 5 safetensors shard(s) …
+21:24:31 INFO     miniengine.model  Weights loaded — 8190735360 parameters on cuda (torch.float16)
+21:24:31 INFO     miniengine.kv_memory_pool  KVMemoryPool: 211 pages × 32 tokens (1.00 GB total, 210 usable pages)
+21:24:31 INFO     miniengine.engine  Radix prefix cache enabled
+2026-05-25 21:24:31,773 - INFO - flashinfer.jit: Prebuilt kernels not found, using JIT backend
+21:24:31 INFO     miniengine.engine  flashinfer backend ready (workspace=128 MB, page_size=32)
+21:24:31 INFO     miniengine.engine  Engine ready  —  mode=paged, backend=flashinfer, compile=False, graph=False, vocab=151669, stop_ids={151643, 151645}, params=8190M
+21:24:31 INFO     miniengine.scheduler  Scheduler started
+21:24:31 INFO     miniengine  Starting server on 127.0.0.1:8000
+INFO:     Started server process [7636]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:53502 - "GET /v1/models HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53510 - "GET /v1/models HTTP/1.1" 200 OK
+21:24:36 INFO     miniengine.scheduler  Enqueued request acd9280e-0eb4-4498-b4ba-b41d8e052c0e  (prompt_len=2999, waiting=1)
+INFO:     127.0.0.1:53510 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+21:24:36 INFO     miniengine.engine  [chunked_prefill] req=acd9280e-0eb4-4498-b4ba-b41d8e052c0e chunk=1/3
+2026-05-25 21:24:36,348 - INFO - flashinfer.jit: Loading JIT ops: batch_prefill_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False_f16qk_False
+2026-05-25 21:24:36,366 - INFO - flashinfer.jit: Finished loading JIT ops: batch_prefill_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False_f16qk_False
+2026-05-25 21:24:36,524 - INFO - flashinfer.jit: Loading JIT ops: page
+2026-05-25 21:24:36,540 - INFO - flashinfer.jit: Finished loading JIT ops: page
+21:24:36 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/2999 (0.0%) running_pages=94 cache_pages=0 evictable=0 free=116
+21:24:36 INFO     miniengine.scheduler  Chunked prefill step  batch=1  chunk_size=1024  completed=0  remaining=1
+21:24:36 INFO     miniengine.engine  [chunked_prefill] req=acd9280e-0eb4-4498-b4ba-b41d8e052c0e chunk=2/3
+21:24:37 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/2999 (0.0%) running_pages=94 cache_pages=0 evictable=0 free=116
+21:24:37 INFO     miniengine.scheduler  Chunked prefill step  batch=1  chunk_size=1024  completed=0  remaining=1
+21:24:37 INFO     miniengine.engine  [chunked_prefill] req=acd9280e-0eb4-4498-b4ba-b41d8e052c0e chunk=3/3
+21:24:37 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=0/2999 (0.0%) running_pages=94 cache_pages=0 evictable=0 free=116
+21:24:37 INFO     miniengine.scheduler  Chunked prefill step  batch=1  chunk_size=1024  completed=1  remaining=0
+2026-05-25 21:24:37,503 - INFO - flashinfer.jit: Loading JIT ops: batch_decode_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False
+2026-05-25 21:24:37,520 - INFO - flashinfer.jit: Finished loading JIT ops: batch_decode_with_kv_cache_dtype_q_f16_dtype_kv_f16_dtype_o_f16_dtype_idx_i32_head_dim_qk_128_head_dim_vo_128_posenc_0_use_swa_False_use_logits_cap_False
+21:24:45 INFO     miniengine.scheduler  Finished request acd9280e-0eb4-4498-b4ba-b41d8e052c0e  (output_len=128, running=1, waiting=0)
+INFO:     127.0.0.1:53510 - "GET /cache_stats HTTP/1.1" 200 OK
+21:24:45 INFO     miniengine.scheduler  Enqueued request 3f0cdc17-79b8-4edd-9cb4-633a50c20167  (prompt_len=2998, waiting=1)
+INFO:     127.0.0.1:53510 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+21:24:45 INFO     miniengine.scheduler  Enqueued request d00dd131-b4ae-4533-af98-7844835d0cef  (prompt_len=2998, waiting=1)
+21:24:45 INFO     miniengine.engine  [chunked_prefill] req=3f0cdc17-79b8-4edd-9cb4-633a50c20167 chunk=3/3
+21:24:45 INFO     miniengine.scheduler  Enqueued request 34d2a3dd-ad34-4d2a-861b-9333328de559  (prompt_len=2998, waiting=2)
+21:24:45 INFO     miniengine.scheduler  Enqueued request d11ee346-ea85-4c44-9282-88ed11a03485  (prompt_len=2998, waiting=3)
+21:24:45 INFO     miniengine.scheduler  Enqueued request ffd40601-d616-449a-bcb8-067fea74e322  (prompt_len=2998, waiting=4)
+21:24:45 INFO     miniengine.scheduler  Enqueued request 31826494-6cdc-4bd8-8d4f-43f11dd8bdf5  (prompt_len=2998, waiting=5)
+21:24:45 INFO     miniengine.scheduler  Enqueued request 0c978673-c8d1-4d25-be5f-34c120ea1ba9  (prompt_len=2998, waiting=6)
+21:24:45 INFO     miniengine.scheduler  Enqueued request 1491e32e-0b56-4bb1-822a-682466023d78  (prompt_len=2998, waiting=7)
+21:24:45 INFO     miniengine.scheduler  Enqueued request 3bd3b89a-b02a-415f-b8c4-5f970f94bf62  (prompt_len=2998, waiting=8)
+21:24:45 INFO     miniengine.scheduler  Enqueued request a2350c44-01ad-4a61-9511-163ba798a71f  (prompt_len=2998, waiting=9)
+21:24:45 INFO     miniengine.scheduler  Enqueued request 6029a67a-d9a1-48c8-a181-f9f4729f7dba  (prompt_len=2999, waiting=10)
+21:24:45 INFO     miniengine.scheduler  Enqueued request dab11d8f-a538-45f1-b2fd-b7aada828178  (prompt_len=2999, waiting=11)
+INFO:     127.0.0.1:41796 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41802 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41816 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41830 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41834 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41844 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41860 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41864 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41866 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41880 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41890 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+21:24:46 INFO     miniengine.scheduler  [cache] batch=1 hit_tokens=2976/2998 (99.3%) running_pages=94 cache_pages=97 evictable=0 free=112
+21:24:46 INFO     miniengine.scheduler  Chunked prefill step  batch=1  chunk_size=1024  completed=1  remaining=0
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=d00dd131-b4ae-4533-af98-7844835d0cef chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=34d2a3dd-ad34-4d2a-861b-9333328de559 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=d11ee346-ea85-4c44-9282-88ed11a03485 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=ffd40601-d616-449a-bcb8-067fea74e322 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=31826494-6cdc-4bd8-8d4f-43f11dd8bdf5 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=0c978673-c8d1-4d25-be5f-34c120ea1ba9 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=1491e32e-0b56-4bb1-822a-682466023d78 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=3bd3b89a-b02a-415f-b8c4-5f970f94bf62 chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=a2350c44-01ad-4a61-9511-163ba798a71f chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=6029a67a-d9a1-48c8-a181-f9f4729f7dba chunk=3/3
+21:24:46 INFO     miniengine.engine  [chunked_prefill] req=dab11d8f-a538-45f1-b2fd-b7aada828178 chunk=3/3
+21:24:46 INFO     miniengine.scheduler  [cache] batch=11 hit_tokens=32736/32980 (99.3%) running_pages=1128 cache_pages=97 evictable=0 free=101
+21:24:46 INFO     miniengine.scheduler  Chunked prefill step  batch=11  chunk_size=1024  completed=11  remaining=0
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+
+... [middle truncated: thousands of repeated KV pool exhausted scheduler errors] ...
+
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:29:36 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:29:36 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 116, in _loop
+    self.step()
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 131, in step
+    return self._step_paged()
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 201, in _step_paged
+    return self._step_paged_chunked()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/scheduler.py", line 360, in _step_paged_chunked
+    token_ids = self.engine.paged_batched_decode(self.running)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/engine.py", line 936, in paged_batched_decode
+    s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Stanford-CS349D-MLSys/miniengine/kv_memory_pool.py", line 120, in allocate
+    raise RuntimeError(
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages

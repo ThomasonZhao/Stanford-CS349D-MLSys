@@ -1,0 +1,23 @@
+===== Milestone 3 Deliverable 08: Retraction BASELINE (parent commit f9bad28, no retraction code) =====
+Workload: bench_retraction_oom --num-requests 12 --concurrency 12 --max-tokens 512 --allow-errors
+Server flags: --kv-pool-gb 1.0 --prefill-chunk-size 1024
+
+----- BENCH CLIENT OUTPUT (server crashes mid-decode; bench times out after warmup) -----
+model=Qwen/Qwen3-8B
+warming cache...
+warmup ok=True out=128 error=None
+cache_after_warmup={'enabled': True, 'hit_rate': 0.0, 'total_lookups': 1, 'total_query_tokens': 2999, 'total_hit_tokens': 0, 'total_inserted_pages': 97, 'total_evicted_pages': 0, 'num_cached_pages': 97, 'num_evictable_pages': 97, 'pool_num_free': 113, 'pool_num_evictable': 97}
+
+----- SERVER LOG EXCERPT: repeated KV pool exhausted -----
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+--
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+Traceback (most recent call last):
+--
+RuntimeError: KV pool exhausted: requested 1, have 0 free pages
+21:25:06 ERROR    miniengine.scheduler  Scheduler step failed
+
+----- VERDICT: without retraction, decode-time OOM crashes the scheduler. -----

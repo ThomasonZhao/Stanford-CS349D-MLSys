@@ -1,0 +1,37 @@
+===== Milestone 3 Deliverable 09: Retraction WITH (current commit 2243c54) =====
+Workload: bench_retraction_oom --num-requests 12 --concurrency 12 --max-tokens 512
+Server flags: --kv-pool-gb 1.0 --prefill-chunk-size 1024
+
+----- BENCH CLIENT OUTPUT: all 12/12 requests complete, errors=0 -----
+model=Qwen/Qwen3-8B
+warming cache...
+warmup ok=True out=128 error=None
+cache_after_warmup={'enabled': True, 'hit_rate': 0.0, 'total_lookups': 1, 'total_query_tokens': 2999, 'total_hit_tokens': 0, 'total_inserted_pages': 97, 'total_evicted_pages': 0, 'num_cached_pages': 97, 'num_evictable_pages': 97, 'pool_num_free': 113, 'pool_num_evictable': 97}
+[000] ok out=512 elapsed=38.6s error=None
+[004] ok out=512 elapsed=38.9s error=None
+[005] ok out=512 elapsed=38.9s error=None
+[007] ok out=512 elapsed=38.9s error=None
+[008] ok out=512 elapsed=38.9s error=None
+[009] ok out=512 elapsed=38.9s error=None
+[010] ok out=512 elapsed=41.0s error=None
+[001] ok out=512 elapsed=45.6s error=None
+[006] ok out=512 elapsed=50.1s error=None
+[002] ok out=512 elapsed=52.4s error=None
+[011] ok out=512 elapsed=54.7s error=None
+[003] ok out=512 elapsed=56.8s error=None
+cache_after_stress={'enabled': True, 'hit_rate': 0.886202526610103, 'total_lookups': 263, 'total_query_tokens': 879835, 'total_hit_tokens': 779712, 'total_inserted_pages': 289, 'total_evicted_pages': 80, 'num_cached_pages': 209, 'num_evictable_pages': 209, 'pool_num_free': 1, 'pool_num_evictable': 209}
+summary ok=12/12 errors=0 output_tokens=6144 elapsed=56.8s tok_s=108.2
+
+----- SERVER LOG EXCERPT: [retract] events fired during decode pressure -----
+21:23:41 INFO     miniengine.scheduler  [retract] victim=d0905001-46cc-4dc0-a4ec-a7a059fa33ef pages_freed=9 reason=decode KV page allocation failed for d0905001-46cc-4dc0-a4ec-a7a059fa33ef: requested=1 cache_seq_len=3264: KV pool exhausted: requested 1, have 0 free pages
+21:23:44 INFO     miniengine.scheduler  [retract] victim=551a1586-d09b-4bac-889e-02111082d6d2 pages_freed=10 reason=decode KV page allocation failed for 551a1586-d09b-4bac-889e-02111082d6d2: requested=1 cache_seq_len=3296: KV pool exhausted: requested 1, have 0 free pages
+21:23:46 INFO     miniengine.scheduler  [retract] victim=d1ea38d3-a1a7-4139-a5dc-deb0d7282c47 pages_freed=11 reason=decode KV page allocation failed for d1ea38d3-a1a7-4139-a5dc-deb0d7282c47: requested=1 cache_seq_len=3328: KV pool exhausted: requested 1, have 0 free pages
+21:23:49 INFO     miniengine.scheduler  [retract] victim=80a81cd5-7ae9-4990-a8bb-4847bb271bce pages_freed=12 reason=decode KV page allocation failed for 80a81cd5-7ae9-4990-a8bb-4847bb271bce: requested=1 cache_seq_len=3360: KV pool exhausted: requested 1, have 0 free pages
+21:23:53 INFO     miniengine.scheduler  [retract] victim=13312300-8fa6-4493-af4d-a456a29899b0 pages_freed=14 reason=decode KV page allocation failed for 13312300-8fa6-4493-af4d-a456a29899b0: requested=1 cache_seq_len=3424: KV pool exhausted: requested 1, have 0 free pages
+21:23:58 INFO     miniengine.scheduler  [retract] victim=2ce14602-4f62-4289-8bf8-725d0a526178 pages_freed=16 reason=decode KV page allocation failed for 2ce14602-4f62-4289-8bf8-725d0a526178: requested=1 cache_seq_len=3488: KV pool exhausted: requested 1, have 0 free pages
+
+----- VERDICT -----
+12/12 OK, 6 retractions fired, num_cached_pages > 0 (locked cache pages survived).
+
+/cache_stats after stress:
+{"enabled":true,"hit_rate":0.886202526610103,"total_lookups":263,"total_query_tokens":879835,"total_hit_tokens":779712,"total_inserted_pages":289,"total_evicted_pages":80,"num_cached_pages":209,"num_evictable_pages":209,"pool_num_free":1,"pool_num_evictable":209}

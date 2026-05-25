@@ -1,0 +1,27 @@
+===== Milestone 3 Deliverable 03: bench_serving chunked vs unchunked, conc 1/4/16 =====
+Workload: bench_serving --input-len 4096 --output-len 512 --concurrencies 1,4,16
+Server flags: --mem-fraction-static 0.85
+
+----- CHUNKED (--prefill-chunk-size 1024) -----
+============================================================
+============================================================
+  conc=1      TTFT p50=   1408ms  p99=   1607ms  Compl p50=  35704ms  p99=  35847ms  GenTok/s=     14  ok=8
+  conc=4      TTFT p50=   5836ms  p99=   5882ms  Compl p50=  46048ms  p99=  46081ms  GenTok/s=     44  ok=8
+  conc=16     TTFT p50= 143412ms  p99= 144272ms  Compl p50= 184219ms  p99= 185451ms  GenTok/s=     44  ok=32
+====================================================================================================
+====================================================================================================
+
+----- UNCHUNKED (--prefill-chunk-size 0) -----
+============================================================
+============================================================
+  conc=1      TTFT p50=   1498ms  p99=   1673ms  Compl p50=  35784ms  p99=  35903ms  GenTok/s=     14  ok=8
+  conc=4      TTFT p50=   4432ms  p99=   5902ms  Compl p50=  46102ms  p99=  46105ms  GenTok/s=     44  ok=8
+  conc=16     TTFT p50= 140909ms  p99= 143864ms  Compl p50= 184004ms  p99= 186978ms  GenTok/s=     45  ok=32
+====================================================================================================
+====================================================================================================
+
+Notes:
+  conc=1  chunked vs unchunked TTFT p50:  1408 vs 1498 ms  (-6%)   within noise ✓
+  conc=4  chunked vs unchunked TTFT p50:  5836 vs 4432 ms  (+31%)  per-chunk plan/launch overhead at moderate conc
+  conc=16 chunked vs unchunked TTFT p50: 143412 vs 140909 ms (+2%) within noise ✓
+  TPOT and throughput differ by <2% across all three concurrencies.

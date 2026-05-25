@@ -1,0 +1,23 @@
+===== Milestone 3 Deliverable 02: MMLU accuracy chunked vs unchunked =====
+Workload: bench_accuracy --dataset mmlu --num-samples 200 --concurrency 8
+Server flags: --mem-fraction-static 0.85 (assignment default)
+
+----- CHUNKED (--prefill-chunk-size 1024) -----
+
+  MMLU Accuracy Report
+  Samples    : 200
+  Correct    : 123
+  Accuracy   : 61.5%
+  Avg latency: 1.52s
+============================================================
+
+----- UNCHUNKED (--prefill-chunk-size 0) -----
+
+  MMLU Accuracy Report
+  Samples    : 200
+  Correct    : 123
+  Accuracy   : 61.5%
+  Avg latency: 1.51s
+============================================================
+
+----- VERDICT: identical 61.5% accuracy on both -> lossless ✓ -----

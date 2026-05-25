@@ -1,0 +1,38 @@
+
+============================================================
+  Serving Benchmark
+  Server       : http://127.0.0.1:8000
+  Model        : Qwen/Qwen3-8B
+  Load mode    : closed-loop
+  Requests     : 8 per level
+  Input len    : 4096
+  Output len   : 16
+  Randomness   : 1.0
+  Concurrencies: [8]
+============================================================
+
+  Loading tokenizer...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Loading WildChat prompts...
+  Loaded 40 candidate prompts
+  Preparing 8 requests...
+  Input lengths:  min=4098, max=4105, mean=4102
+  Output lengths: min=16, max=16, mean=16
+
+  Running concurrency=8 (8 requests, closed-loop)...
+    [  1/8] ok in=4105 out=16 ttft=11665ms compl=13107ms (elapsed 13.1s)
+    [  2/8] ok in=4098 out=16 ttft=11864ms compl=13193ms (elapsed 13.2s)
+    [  3/8] ok in=4105 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  4/8] ok in=4098 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  5/8] ok in=4105 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  6/8] ok in=4098 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+    [  7/8] ok in=4105 out=16 ttft=11863ms compl=13194ms (elapsed 13.2s)
+    [  8/8] ok in=4105 out=16 ttft=11864ms compl=13194ms (elapsed 13.2s)
+  conc=8      TTFT p50=  11864ms  p99=  11864ms  Compl p50=  13194ms  p99=  13194ms  GenTok/s=     10  ok=8
+
+====================================================================================================
+  Conc   TTFT_p50   TTFT_p99  Compl_p50  Compl_p99   TPOT_p50   TPOT_p99   GenTok/s    OK
+        (ms)       (ms)        (ms)        (ms)        (ms)        (ms)
+----------------------------------------------------------------------------------------------------
+     8      11864      11864      13194      13194       88.7       95.6         10     8
+====================================================================================================

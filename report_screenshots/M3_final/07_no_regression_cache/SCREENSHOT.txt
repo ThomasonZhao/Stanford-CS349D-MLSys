@@ -1,0 +1,29 @@
+===== Milestone 3 Deliverable 07: bench_serving default, cache-on vs --disable-radix-cache =====
+Workload: bench_serving --input-len 1024 --output-len 512 --concurrencies 1,4,16 (WildChat-style)
+Server flags: --mem-fraction-static 0.85 --prefill-chunk-size 1024
+
+----- CACHE ON -----
+============================================================
+============================================================
+  conc=1      TTFT p50=    260ms  p99=    587ms  Compl p50=  19159ms  p99=  27305ms  GenTok/s=     15  ok=8
+  conc=4      TTFT p50=    146ms  p99=    218ms  Compl p50=  20623ms  p99=  29262ms  GenTok/s=     44  ok=8
+  conc=16     TTFT p50=    477ms  p99=   2284ms  Compl p50=  28261ms  p99=  43399ms  GenTok/s=    133  ok=32
+====================================================================================================
+====================================================================================================
+
+----- CACHE OFF (--disable-radix-cache) -----
+============================================================
+============================================================
+  conc=1      TTFT p50=    264ms  p99=    568ms  Compl p50=  19155ms  p99=  27317ms  GenTok/s=     15  ok=8
+  conc=4      TTFT p50=    719ms  p99=   1043ms  Compl p50=  21805ms  p99=  29952ms  GenTok/s=     43  ok=8
+  conc=16     TTFT p50=    746ms  p99=   4291ms  Compl p50=  29127ms  p99=  44750ms  GenTok/s=    129  ok=32
+====================================================================================================
+====================================================================================================
+
+----- VERDICT: cache strictly helps or matches; never regresses -----
+  conc=1  TTFT on/off: 260 / 264 ms   (within noise)
+  conc=4  TTFT on/off: 146 / 719 ms   (cache helps via shared chat-template prefix)
+  conc=16 TTFT on/off: 477 / 746 ms   (cache helps)
+
+/cache_stats (cache on, after run):
+{"enabled":true,"hit_rate":0.3335685976437374,"total_lookups":48,"total_query_tokens":36838,"total_hit_tokens":12288,"total_inserted_pages":1057,"total_evicted_pages":476,"num_cached_pages":581,"num_evictable_pages":581,"pool_num_free":28,"pool_num_evictable":581}

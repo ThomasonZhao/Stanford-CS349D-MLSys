@@ -1,0 +1,18 @@
+model=Qwen/Qwen3-8B
+warming cache...
+warmup ok=True out=128 error=None
+cache_after_warmup={'enabled': True, 'hit_rate': 0.0, 'total_lookups': 1, 'total_query_tokens': 2999, 'total_hit_tokens': 0, 'total_inserted_pages': 97, 'total_evicted_pages': 0, 'num_cached_pages': 97, 'num_evictable_pages': 97, 'pool_num_free': 113, 'pool_num_evictable': 97}
+[000] ok out=512 elapsed=38.6s error=None
+[004] ok out=512 elapsed=38.9s error=None
+[005] ok out=512 elapsed=38.9s error=None
+[007] ok out=512 elapsed=38.9s error=None
+[008] ok out=512 elapsed=38.9s error=None
+[009] ok out=512 elapsed=38.9s error=None
+[010] ok out=512 elapsed=41.0s error=None
+[001] ok out=512 elapsed=45.6s error=None
+[006] ok out=512 elapsed=50.1s error=None
+[002] ok out=512 elapsed=52.4s error=None
+[011] ok out=512 elapsed=54.7s error=None
+[003] ok out=512 elapsed=56.8s error=None
+cache_after_stress={'enabled': True, 'hit_rate': 0.886202526610103, 'total_lookups': 263, 'total_query_tokens': 879835, 'total_hit_tokens': 779712, 'total_inserted_pages': 289, 'total_evicted_pages': 80, 'num_cached_pages': 209, 'num_evictable_pages': 209, 'pool_num_free': 1, 'pool_num_evictable': 209}
+summary ok=12/12 errors=0 output_tokens=6144 elapsed=56.8s tok_s=108.2

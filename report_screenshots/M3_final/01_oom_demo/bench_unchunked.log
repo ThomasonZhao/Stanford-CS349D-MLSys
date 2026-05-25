@@ -1,0 +1,23 @@
+
+============================================================
+  Serving Benchmark
+  Server       : http://127.0.0.1:8000
+  Model        : Qwen/Qwen3-8B
+  Load mode    : closed-loop
+  Requests     : 8 per level
+  Input len    : 4096
+  Output len   : 16
+  Randomness   : 1.0
+  Concurrencies: [8]
+============================================================
+
+  Loading tokenizer...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+  Loading WildChat prompts...
+  Loaded 40 candidate prompts
+  Preparing 8 requests...
+  Input lengths:  min=4098, max=4105, mean=4102
+  Output lengths: min=16, max=16, mean=16
+
+  Running concurrency=8 (8 requests, closed-loop)...
+    [  1/8] ok in=4105 out=16 ttft=22150ms compl=33143ms (elapsed 33.1s)
