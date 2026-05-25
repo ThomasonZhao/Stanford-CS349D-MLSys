@@ -54,6 +54,10 @@ class Request:
     status: RequestStatus = RequestStatus.WAITING
     arrival_time: float = field(default_factory=time.time)
 
+    # Paged KV cache metadata (managed by the engine in paged mode, milestone 2)
+    page_indices: list[int] = field(default_factory=list)
+    seq_len: int = 0
+
     # Per-request KV cache (set by Engine during prefill, updated on each decode)
     kv_cache: Any = None
 
