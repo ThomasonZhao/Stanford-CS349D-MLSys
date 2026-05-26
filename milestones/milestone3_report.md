@@ -50,7 +50,7 @@ Two subtler cleanup details matter. First, a retracted request's borrowed cache 
 
 | Item | Value |
 |---|---|
-| GPU | NVIDIA L4 (24 GiB HBM, compute capability 8.9, driver 595) |
+| GPU | NVIDIA L4 (24 GiB HBM) |
 | Model | `Qwen/Qwen3-8B` (fp16, 8.19 B params) |
 | Engine | MiniEngine paged mode, `--page-size 32 --max-running 16`, FlashInfer attention backend |
 | Software | torch 2.5.1+cu121 · flashinfer-python 0.2.5+cu121torch2.5 · cuda-toolkit 12.6 (system) |
@@ -73,7 +73,8 @@ bench_serving --input-len 4096 --output-len 16 --concurrencies 8 --num-requests 
 | `--prefill-chunk-size 0` (unchunked) | `torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 450.00 MiB. ... 21.73 GiB memory in use.` | First request streams 1 token, then hangs / errors |
 | `--prefill-chunk-size 1024` (chunked) | clean shutdown; no OOM | **8/8 OK**, TTFT p50 = 11.9 s, GenTok/s = 10 |
 
-[INSERT SCREENSHOT — Deliverable 1: OOM demo (server CUDA OOM traceback for unchunked + chunked client summary)]
+![alt text](image.png)
+![alt text](image-1.png)
 
 The packed prefill in the unchunked run tries to materialize MLP gate/up activations for 8 × 4096 ≈ 32K q-tokens at once — ~32K × 12,288 × 2 B ≈ 770 MiB *per layer*; with 36 layers, transient peaks blow past the 1 GiB budget. With chunk=1024, each step processes 8 × 1024 = 8K q-tokens (~200 MiB MLP), which fits comfortably.
 
@@ -92,7 +93,7 @@ Server flags: `--mem-fraction-static 0.85`, `--prefill-chunk-size 1024` (or `0` 
 
 Identical accuracy and identical incorrect-prediction set on the first five inspected samples. Chunked prefill is numerically lossless.
 
-[INSERT SCREENSHOT — Deliverable 2: MMLU accuracy report (chunked + unchunked side-by-side)]
+![alt text](image-2.png)
 
 #### Deliverable 3 — `bench_serving` regression conc 1 / 4 / 16
 
@@ -111,7 +112,7 @@ TPOT and throughput differ by < 2 % at all three concurrencies. TTFT is within n
 
 The conc=4 outlier is **per-chunk overhead at moderate concurrency**: each step calls `flashinfer.BatchPrefillWithPagedKVCacheWrapper.plan` and a varlen forward; the plan and kernel-launch cost is ~hundreds of milliseconds and amortizes over the work in the step. At conc=1 the chunked path has very little parallel work so the overhead is dwarfed by the per-chunk compute; at conc=16 the head-of-line block dominates and per-step overhead is again small relative to compute. At conc=4 the activation batch is exactly the "medium" size where adding 3 extra plan-and-launch cycles is most visible.
 
-[INSERT SCREENSHOT — Deliverable 3: bench_serving conc 1/4/16 tables, chunked vs unchunked]
+![alt text](image-3.png)
 
 ### 2.3 Part B — Radix prefix cache
 
@@ -132,7 +133,7 @@ bench_cache --workload shared --num-groups 5 --questions-per-group 20 \
 
 `/cache_stats` after the run: `hit_rate=0.789, total_inserted_pages=460, total_evicted_pages=92, num_cached_pages=368`. The cache holds 5 groups × ~62 prefix pages ≈ 310 locked pages of shared prefix; the 92 evictions are old suffixes being recycled from the tail. The 78.9 % hit rate is right at the page-aligned theoretical maximum (a 2000-token prefix matches as 62 pages × 32 = 1984 tokens; the per-question suffix never hits).
 
-[INSERT SCREENSHOT — Deliverable 4: bench_cache shared cache-on vs cache-off summary]
+![alt text](image-4.png)
 
 #### Deliverable 5 — Shared prefix-length sweep (cache-on)
 
@@ -151,8 +152,8 @@ Same server (cache on, chunk=1024). The bench creates one full set of 100 reques
 
 Throughput drops as the prefix grows because each request's *total* work grows (prefix + question), even though the cache amortizes the prefix. The hit rate stays in a tight 56-74 % band reflecting page-aligned matching's structural ceiling (1 in K requests per group misses the prefix). The fact that throughput at `prefix=500` is slightly higher than at `prefix=200` is the hit-rate boost (82 % at 500 if we measure within-group) outpacing the linear work growth.
 
-[INSERT SCREENSHOT — Deliverable 5: bench_cache shared, prefix-length sweep {200, 500, 2000, 4000}]
-
+![alt text](image-5.png)
+![alt text](image-6.png)
 #### Deliverable 6 — Multiturn workload (≥ 50 % targets)
 
 ```
@@ -184,7 +185,7 @@ Per-turn breakdown (cache on):
 
 Turn-0 hit rate is 0 % (correct — no prior context), and the rate climbs monotonically to 88.4 % at turn 7. Per-turn TTFT drops from 472 ms → ~170 ms once the cache warms.
 
-[INSERT SCREENSHOT — Deliverable 6: bench_cache multiturn cache-on vs cache-off + per-turn breakdown]
+![alt text](image-7.png)
 
 #### Deliverable 7 — No-regression on default `bench_serving`
 
@@ -201,7 +202,7 @@ Server at `--prefill-chunk-size 1024`, cache on vs `--disable-radix-cache`.
 
 The cache strictly helps or matches `--disable-radix-cache` — never regresses. The conc=4 4.92× ratio is striking and is *not* an artifact: WildChat-style prompts share Qwen3's chat-template prefix (~12 tokens of `<|im_start|>system…` boilerplate plus a system message), which gets cached after the first request and short-circuits every subsequent prefill. The `/cache_stats` snapshot records `hit_rate=0.353` overall on the supposedly "no-sharing" workload — a positive: even on the regression-only test, the cache contributes wall-time savings without ever hurting.
 
-[INSERT SCREENSHOT — Deliverable 7: bench_serving default cache-on vs cache-off at conc 1/4/16]
+![alt text](image-8.png)
 
 ### 2.4 Bonus — Retraction
 
@@ -223,7 +224,7 @@ RuntimeError: KV pool exhausted: requested 1, have 0 free pages
 
 Server log shows the same traceback fire on every scheduler step after the first decode-time growth attempt. The bench eventually times out (no further client-visible progress).
 
-[INSERT SCREENSHOT — Deliverable 8: retraction baseline (server crash trace + bench timing out after warmup)]
+![alt text](image-9.png)
 
 #### Deliverable 9 — With retraction
 
@@ -238,12 +239,12 @@ cache_after_stress={'enabled': True, 'hit_rate': 0.886,
 
 The server log contains **6 `[retract] victim=... pages_freed=N` lines** as the workload pushes the pool to exhaustion. Despite repeated retraction the 12/12 requests all finish, with the radix cache's locked pages (`num_cached_pages = 209`) surviving the eviction pressure — retraction correctly distinguishes pool-owned pages (free back to pool) from cache-borrowed pages (unlock, don't free).
 
-[INSERT SCREENSHOT — Deliverable 9: retraction with-code (12/12 OK bench summary + server [retract] log lines)]
+![alt text](image-10.png)
 
 ### 2.5 Overall scorecard
 
-| # | Deliverable | Expectation | Actual | Status |
-|---|---|---|---|---|
+| # | Deliverable | Expectation | Actual |
+|---|---|---|---|
 | 1 | OOM demo | unchunked OOMs, chunked succeeds | `CUDA OOM` traceback + 8/8 OK | ✓ |
 | 2 | MMLU accuracy | within noise (≤ ~1 pp) | 61.5 % vs 61.5 % (Δ = 0 pp) | ✓ lossless |
 | 3 | bench_serving conc 1/4/16 | within noise | TTFT Δ −6 % / +31 % / +2 %; TPOT, throughput < 2 % | ✓ (conc=4 explained) |
