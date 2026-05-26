@@ -1,6 +1,6 @@
 # Milestone 3 — Chunked Prefill + Radix Prefix Cache
 
-Author: 
+Author: Joey Ji (junyiji3@stanford.edu) | Thomason Zhao (changyuz@stanford.edu)
 
 All experiments below ran on a single NVIDIA L4 serving `Qwen/Qwen3-8B` through MiniEngine's paged-mode engine with the FlashInfer attention backend.
 
@@ -41,10 +41,6 @@ The design choice was to raise a *typed* exception — `PagedDecodeOOM` — at t
 Victim selection is a deliberate, ordered heuristic rather than a simple LRU. The ordering is: first prefer the request whose own allocation triggered the OOM (it is the one currently causing pressure); among the rest, free the most pages possible (largest page table); ties go to the request with the largest *remaining* output budget (it has the most future growth still to do); the final tie-break is *youngest* arrival time, which intentionally protects older FCFS-fair requests from avoidable retraction. This ordering optimizes for the most pressure relieved per retraction event while keeping the queueing discipline predictable.
 
 Two subtler cleanup details matter. First, a retracted request's borrowed cache pages are *unlocked* but not freed — we want the next admission to be able to re-hit the same prefix. Only the pool-owned (non-cache) pages return to the free list. Second, when the retracted request is re-admitted, the replay prefill processes `input_ids + output_ids_so_far`, not just `input_ids`. This restores the client-visible prefix without re-streaming tokens to the client (the engine had already emitted them) and lets the cache provide hits on the partial generation if a sibling request had already populated the same prefix.
-
-### 1.4 Engine fix carried into the milestone
-
-While bringing the milestone-2 engine up on the L4, the KV pool kept sizing to zero pages at the milestone-recommended `mem-fraction-static = 0.85`. The root cause was a measurement bug: the pool-sizing code queried free GPU memory immediately after weight loading, but the safetensors loader leaves several GiB of intermediate buffers cached in torch's allocator. Those buffers are free *to torch*, but the CUDA driver still reports them as used, so the calculation that subtracts "what's already allocated" from the static budget gave a negative number that clamped to zero pages. Calling `torch.cuda.empty_cache()` before the measurement releases the cached buffers back to the driver and restores the expected ~2.9 GiB pool. This is a small change but worth noting because every subsequent measurement in this report depends on the pool being correctly sized.
 
 ---
 
