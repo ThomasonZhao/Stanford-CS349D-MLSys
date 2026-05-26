@@ -93,9 +93,6 @@ While bringing the engine up on the L4, the KV pool kept sizing to zero at the r
 | KV pool budget | `--mem-fraction-static 0.85` → 610 pages × 32 tokens = ~19,520 cacheable tokens (except deliverables 1 and 8/9 which set this deliberately) |
 | Chunk size (Part A) | `--prefill-chunk-size 1024` (chosen below in §2.6) |
 | Cache (Part B) | enabled by default; turned off with `--disable-radix-cache` for off-runs |
-| Per-deliverable params | full mapping in [`report_screenshots/M3_final/RESULTS_OVERVIEW.md`](../report_screenshots/M3_final/RESULTS_OVERVIEW.md) |
-
-Each deliverable has a self-contained `SCREENSHOT.txt` under its directory; we quote the relevant rows here and refer to the raw bench/server logs alongside them.
 
 ### 2.2 Part A — Chunked prefill
 
@@ -112,9 +109,7 @@ bench_serving --input-len 4096 --output-len 16 --concurrencies 8 --num-requests 
 | `--prefill-chunk-size 0` (unchunked) | `torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 450.00 MiB. ... 21.73 GiB memory in use.` | First request streams 1 token, then hangs / errors |
 | `--prefill-chunk-size 1024` (chunked) | clean shutdown; no OOM | **8/8 OK**, TTFT p50 = 11.9 s, GenTok/s = 10 |
 
-*Evidence:* `report_screenshots/M3_final/01_oom_demo/{server,bench}_*.log`, summary in `01_oom_demo/SCREENSHOT.txt`. The unchunked server log's traceback is at line 136.
-
-[INSERT SCREENSHOT — terminal `cat 01_oom_demo/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 1: OOM demo (server CUDA OOM traceback for unchunked + chunked client summary)]
 
 The packed prefill in the unchunked run tries to materialize MLP gate/up activations for 8 × 4096 ≈ 32K q-tokens at once — ~32K × 12,288 × 2 B ≈ 770 MiB *per layer*; with 36 layers, transient peaks blow past the 1 GiB budget. With chunk=1024, each step processes 8 × 1024 = 8K q-tokens (~200 MiB MLP), which fits comfortably.
 
@@ -133,9 +128,7 @@ Server flags: `--mem-fraction-static 0.85`, `--prefill-chunk-size 1024` (or `0` 
 
 Identical accuracy and identical incorrect-prediction set on the first five inspected samples. Chunked prefill is numerically lossless.
 
-*Evidence:* `report_screenshots/M3_final/02_mmlu_accuracy/{bench,server}_*.log`.
-
-[INSERT SCREENSHOT — terminal `cat 02_mmlu_accuracy/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 2: MMLU accuracy report (chunked + unchunked side-by-side)]
 
 #### Deliverable 3 — `bench_serving` regression conc 1 / 4 / 16
 
@@ -154,9 +147,7 @@ TPOT and throughput differ by < 2 % at all three concurrencies. TTFT is within n
 
 The conc=4 outlier is **per-chunk overhead at moderate concurrency**: each step calls `flashinfer.BatchPrefillWithPagedKVCacheWrapper.plan` and a varlen forward; the plan and kernel-launch cost is ~hundreds of milliseconds and amortizes over the work in the step. At conc=1 the chunked path has very little parallel work so the overhead is dwarfed by the per-chunk compute; at conc=16 the head-of-line block dominates and per-step overhead is again small relative to compute. At conc=4 the activation batch is exactly the "medium" size where adding 3 extra plan-and-launch cycles is most visible.
 
-*Evidence:* `03_chunked_regression/{bench,server}_*.log`.
-
-[INSERT SCREENSHOT — terminal `cat 03_chunked_regression/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 3: bench_serving conc 1/4/16 tables, chunked vs unchunked]
 
 ### 2.3 Part B — Radix prefix cache
 
@@ -175,11 +166,9 @@ bench_cache --workload shared --num-groups 5 --questions-per-group 20 \
 * Throughput: **2.10 / 0.92 = 2.28× ✓ (target ≥ 2×)**
 * TTFT p50:   **3232 / 232 = 13.9× reduction ✓ (target ≥ 2×)**
 
-`/cache_stats` after the run (from the JSON file): `hit_rate=0.789, total_inserted_pages=460, total_evicted_pages=92, num_cached_pages=368`. The cache holds 5 groups × ~62 prefix pages ≈ 310 locked pages of shared prefix; the 92 evictions are old suffixes being recycled from the tail. The 78.9 % hit rate is right at the page-aligned theoretical maximum (a 2000-token prefix matches as 62 pages × 32 = 1984 tokens; the per-question suffix never hits).
+`/cache_stats` after the run: `hit_rate=0.789, total_inserted_pages=460, total_evicted_pages=92, num_cached_pages=368`. The cache holds 5 groups × ~62 prefix pages ≈ 310 locked pages of shared prefix; the 92 evictions are old suffixes being recycled from the tail. The 78.9 % hit rate is right at the page-aligned theoretical maximum (a 2000-token prefix matches as 62 pages × 32 = 1984 tokens; the per-question suffix never hits).
 
-*Evidence:* `04_shared_cache/{bench,server,cache_stats}_*`.
-
-[INSERT SCREENSHOT — terminal `cat 04_shared_cache/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 4: bench_cache shared cache-on vs cache-off summary]
 
 #### Deliverable 5 — Shared prefix-length sweep (cache-on)
 
@@ -198,9 +187,7 @@ Same server (cache on, chunk=1024). The bench creates one full set of 100 reques
 
 Throughput drops as the prefix grows because each request's *total* work grows (prefix + question), even though the cache amortizes the prefix. The hit rate stays in a tight 56-74 % band reflecting page-aligned matching's structural ceiling (1 in K requests per group misses the prefix). The fact that throughput at `prefix=500` is slightly higher than at `prefix=200` is the hit-rate boost (82 % at 500 if we measure within-group) outpacing the linear work growth.
 
-*Evidence:* `05_prefix_sweep/bench_prefix_*.log`.
-
-[INSERT SCREENSHOT — terminal `cat 05_prefix_sweep/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 5: bench_cache shared, prefix-length sweep {200, 500, 2000, 4000}]
 
 #### Deliverable 6 — Multiturn workload (≥ 50 % targets)
 
@@ -233,9 +220,7 @@ Per-turn breakdown (cache on):
 
 Turn-0 hit rate is 0 % (correct — no prior context), and the rate climbs monotonically to 88.4 % at turn 7. Per-turn TTFT drops from 472 ms → ~170 ms once the cache warms.
 
-*Evidence:* `06_multiturn/{bench,server,cache_stats}_*`.
-
-[INSERT SCREENSHOT — terminal `cat 06_multiturn/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 6: bench_cache multiturn cache-on vs cache-off + per-turn breakdown]
 
 #### Deliverable 7 — No-regression on default `bench_serving`
 
@@ -252,9 +237,7 @@ Server at `--prefill-chunk-size 1024`, cache on vs `--disable-radix-cache`.
 
 The cache strictly helps or matches `--disable-radix-cache` — never regresses. The conc=4 4.92× ratio is striking and is *not* an artifact: WildChat-style prompts share Qwen3's chat-template prefix (~12 tokens of `<|im_start|>system…` boilerplate plus a system message), which gets cached after the first request and short-circuits every subsequent prefill. The `/cache_stats` snapshot records `hit_rate=0.353` overall on the supposedly "no-sharing" workload — a positive: even on the regression-only test, the cache contributes wall-time savings without ever hurting.
 
-*Evidence:* `07_no_regression_cache/{bench,server,cache_stats}_*`.
-
-[INSERT SCREENSHOT — terminal `cat 07_no_regression_cache/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 7: bench_serving default cache-on vs cache-off at conc 1/4/16]
 
 ### 2.4 Bonus — Retraction
 
@@ -276,9 +259,7 @@ RuntimeError: KV pool exhausted: requested 1, have 0 free pages
 
 Server log shows the same traceback fire on every scheduler step after the first decode-time growth attempt. The bench eventually times out (no further client-visible progress).
 
-*Evidence:* `08_retraction_baseline/{bench.log, server.trimmed.log, SCREENSHOT.txt}`. (The full 1.7 GiB crash-loop server log was trimmed to head + tail; all unique evidence is preserved in the trimmed copy.)
-
-[INSERT SCREENSHOT — terminal `cat 08_retraction_baseline/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 8: retraction baseline (server crash trace + bench timing out after warmup)]
 
 #### Deliverable 9 — With retraction
 
@@ -293,9 +274,7 @@ cache_after_stress={'enabled': True, 'hit_rate': 0.886,
 
 The server log contains **6 `[retract] victim=... pages_freed=N` lines** as the workload pushes the pool to exhaustion. Despite repeated retraction the 12/12 requests all finish, with the radix cache's locked pages (`num_cached_pages = 209`) surviving the eviction pressure — retraction correctly distinguishes pool-owned pages (free back to pool) from cache-borrowed pages (unlock, don't free).
 
-*Evidence:* `09_retraction_with/{bench.log, server.log, cache_stats_after.json}`.
-
-[INSERT SCREENSHOT — terminal `cat 09_retraction_with/SCREENSHOT.txt`]
+[INSERT SCREENSHOT — Deliverable 9: retraction with-code (12/12 OK bench summary + server [retract] log lines)]
 
 ### 2.5 Overall scorecard
 
@@ -355,21 +334,3 @@ The milestone-2 engine already does iteration-level batching, packed varlen pref
 * **Single-plan multi-chunk prefill.** Cache the FlashInfer wrapper plan for an entire request and only update the page-table tail per chunk. Would eliminate the per-chunk plan overhead that hurts deliverable 3 conc=4.
 * **Cache-aware admission policy.** Today the scheduler is FCFS over the waiting queue; a cache-aware policy that prefers requests whose prefix is already resident (or already pinned by a sibling group request) would reduce eviction churn on workloads where the working set is larger than the pool.
 * **Bounded-replay retraction.** Either cap the replay prefix length (lossy but recoverable) or maintain an upper bound on per-request `cache_seq_len` at admission time so retraction never produces an unfittable replay.
-
----
-
-## Appendix — Artifact index
-
-All bench/server logs and curated terminal summaries live under `report_screenshots/M3_final/`. Each subdirectory has a `SCREENSHOT.txt` ready to `cat` for terminal capture, plus the raw logs that produced the summary. `RESULTS_OVERVIEW.md` at the top level of `M3_final/` provides the expectation-vs-actual scorecard + per-deliverable parameter mapping.
-
-| # | Directory | Screenshot file |
-|---|---|---|
-| 1 | `01_oom_demo/` | `SCREENSHOT.txt` |
-| 2 | `02_mmlu_accuracy/` | `SCREENSHOT.txt` |
-| 3 | `03_chunked_regression/` | `SCREENSHOT.txt` |
-| 4 | `04_shared_cache/` | `SCREENSHOT.txt` |
-| 5 | `05_prefix_sweep/` | `SCREENSHOT.txt` |
-| 6 | `06_multiturn/` | `SCREENSHOT.txt` |
-| 7 | `07_no_regression_cache/` | `SCREENSHOT.txt` |
-| 8 | `08_retraction_baseline/` | `SCREENSHOT.txt` |
-| 9 | `09_retraction_with/` | `SCREENSHOT.txt` |
