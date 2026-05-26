@@ -263,14 +263,23 @@ class Scheduler:
                 < self.max_running
             ):
                 req = self.waiting[0]
-                needed_pages = pool.pages_needed(self.prefill_chunk_size)
+                needed_pages = pool.pages_needed(len(req.input_ids))
                 if admitted_pages + needed_pages > pool.num_free:
                     break  # can't fit even a chunk; wait for pages to free
                 admitted_pages += needed_pages
                 to_admit.append(self.waiting.popleft())
+        
+        logger.info(
+            "Admitting %d new requests (%d pages) with chunked prefill (chunk size=%d), currently prefilling %d requests",
+            len(to_admit),
+            admitted_pages,
+            self.prefill_chunk_size,
+            len(self.prefilling),
+        )
 
         for req in to_admit:
             req.status = RequestStatus.RUNNING
+            self.engine.init_paged_prefill_state(req)  # reserve KV pages for the request
             self.prefilling.append(req)
 
         # ── Phase 2: chunked prefill  ────────────────────────────────────

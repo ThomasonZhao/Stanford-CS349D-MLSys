@@ -644,6 +644,16 @@ class Engine:
             )
         )
 
+    # ── Paged prefill helpers ───────────────────────────────────────────────
+    def init_paged_prefill_state(self, req: Request) -> None:
+        """Initialize paged state for a request, allocating its pages."""
+        assert self.pool is not None
+        s = self._state(req)
+        if s.page_table:
+            return  # already initialized
+        s.page_table = self.pool.allocate(self.pool.pages_needed(len(req.input_ids)))
+        s.cache_seq_len = 0
+
     # ── Paged prefill chunked ───────────────────────────────────────────────
     @torch.inference_mode()
     def paged_batched_chunked_prefill(
@@ -685,35 +695,37 @@ class Engine:
             for r, st, en in zip(active_requests, starts, ends)
             for t in r.input_ids[st:en]
         ]
-        flat_pos = [
-            p
-            for st, en in zip(starts, ends)
-            for p in range(st, en)
-        ]
+        flat_pos = [p for st, en in zip(starts, ends) for p in range(st, en)]
         input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
         position_ids = _to_long(flat_pos, self.device).unsqueeze(0)
 
         cu = _cu_seqlens(chunk_lens, self.device)
         last_idx = (cu[1:] - 1).long()
-        
+
         common = dict(
             kv_pool_caches=self._kv_pool_caches,
             logits_indices=last_idx,
         )
         if self.attention_backend == "flashinfer":
-            backend_kwargs = self._fi_kwargs_chunked_prefill(active_states, starts, ends, chunk_lens)
+            backend_kwargs = self._fi_kwargs_chunked_prefill(
+                active_states, starts, ends, chunk_lens
+            )
         else:
-            raise NotImplementedError("chunked prefill is only implemented for flashinfer backend")
+            raise NotImplementedError(
+                "chunked prefill is only implemented for flashinfer backend"
+            )
             # backend_kwargs = self._fa_kwargs_chunked_prefill(active_states, chunk_lens, cu)
-        
+
         logits, _ = self.model(input_ids, position_ids, **common, **backend_kwargs)
-        
+
         out_by_id: dict[str, int | None] = {}
         for i, (r, s, end) in enumerate(zip(active_requests, active_states, ends)):
             s.cache_seq_len = end
             if end == len(r.input_ids):
                 # This chunk finished prefetching the whole request, so sample the first token.
-                token_id = sample_token(logits[0, i : i + 1], r.sampling_params, r.output_ids)
+                token_id = sample_token(
+                    logits[0, i : i + 1], r.sampling_params, r.output_ids
+                )
                 out_by_id[r.request_id] = token_id
             else:
                 # More chunks remain for this request; don't sample yet.
@@ -722,10 +734,67 @@ class Engine:
 
     # ── Backend-specific prefill metadata builders ─────────────────────
     def _fi_kwargs_chunked_prefill(
-        self, states: list[_PagedState], starts: list[int], ends: list[int], chunk_lens: list[int]
-    ):
-        # TODO
-        pass
+        self,
+        states: list[_PagedState],
+        starts: list[int],
+        ends: list[int],
+        chunk_lens: list[int],
+    ) -> dict:
+        assert self._fi_prefill_wrapper is not None
+        ps = self.page_size
+
+        # One batch id per newly appended token
+        batch_indices = torch.tensor(
+            [b for b, l in enumerate(chunk_lens) for _ in range(l)],
+            dtype=torch.int32,
+            device=self.device,
+        )
+
+        # Absolute KV positions for the newly appended tokens
+        positions = torch.tensor(
+            [p for st, en in zip(starts, ends) for p in range(st, en)],
+            dtype=torch.int32,
+            device=self.device,
+        )
+
+        # Visible KV pages after this chunk is appended.
+        page_counts = [self.pool.pages_needed(end) for end in ends]
+        kv_indptr = _to_int32_cumsum(page_counts, self.device)
+        kv_indices = torch.tensor(
+            [p for s, pc in zip(states, page_counts) for p in s.page_table[:pc]],
+            dtype=torch.int32,
+            device=self.device,
+        )
+        kv_last_page_len = torch.tensor(
+            [((end - 1) % ps) + 1 for end in ends],
+            dtype=torch.int32,
+            device=self.device,
+        )
+        qo_indptr = _to_int32_cumsum(chunk_lens, self.device)
+
+        self._fi_prefill_wrapper.plan(
+            qo_indptr=qo_indptr,
+            paged_kv_indptr=kv_indptr,
+            paged_kv_indices=kv_indices,
+            paged_kv_last_page_len=kv_last_page_len,
+            num_qo_heads=self._num_qo_heads,
+            num_kv_heads=self._num_kv_heads,
+            head_dim_qk=self._head_dim,
+            page_size=ps,
+            causal=True,
+            q_data_type=self.dtype,
+        )
+
+        return dict(
+            fi_ctx=FlashInferContext(
+                wrapper=self._fi_prefill_wrapper,
+                batch_indices=batch_indices,
+                positions=positions,
+                kv_indptr=kv_indptr,
+                kv_indices=kv_indices,
+                kv_last_page_len=kv_last_page_len,
+            )
+        )
 
     # ── Paged decode (varlen, q_len=1 per req) ──────────────────────────
 
