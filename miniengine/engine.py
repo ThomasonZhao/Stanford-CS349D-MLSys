@@ -32,6 +32,7 @@ from transformers import AutoTokenizer
 from miniengine.core import Request
 from miniengine.kv_memory_pool import KVMemoryPool
 from miniengine.model import CausalLM, FlashInferContext, ModelConfig, load_weights
+from miniengine.radix_cache import RadixCache, RadixNode
 from miniengine.sampler import sample_token
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ class _PagedState:
 
     page_table: list[int] = field(default_factory=list)
     cache_seq_len: int = 0
+    cache_node: object | None = None
+    cache_hit_tokens: int = 0
 
 
 class Engine:
@@ -82,6 +85,7 @@ class Engine:
         cuda_graph_max_pages: int = 32,
         attention_backend: str = "flashinfer",
         flashinfer_workspace_mb: int = 128,
+        radix_cache_enabled: bool = True,
     ):
         if cuda_graph and mode != "paged":
             raise ValueError("cuda_graph requires mode='paged'")
@@ -138,6 +142,7 @@ class Engine:
 
         # ── Paged-mode setup (only when mode == "paged") ───────────────
         self.pool: KVMemoryPool | None = None
+        self.radix_cache: RadixCache | None = None
         self.page_size = page_size
         self.max_position = max_position
         self._kv_pool_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None
@@ -170,6 +175,8 @@ class Engine:
                 bytes_budget=kv_pool_bytes,
             )
             self._kv_pool_caches = self.pool.kv_caches
+            self.radix_cache = RadixCache(self.pool) if radix_cache_enabled else None
+            self.pool.radix_cache = self.radix_cache
             # Pre-grow RoPE so the paged forward stays alloc-free
             # (graph-capture and torch.compile safe).
             self.model.model.rotary_emb.preallocate(
@@ -509,8 +516,29 @@ class Engine:
     def free_paged_state(self, req: Request) -> None:
         """Release a request's pages back to the pool."""
         s = self._paged_state.pop(req.request_id, None)
-        if s is not None and s.page_table and self.pool is not None:
+        if s is None or self.pool is None:
+            return
+
+        if self.radix_cache is None:
             self.pool.free(s.page_table)
+            return
+
+        owned_pages = set(s.page_table[self.pool.pages_needed(s.cache_hit_tokens) :])
+        kv_output_tokens = max(0, s.cache_seq_len - len(req.input_ids))
+        cache_tokens = req.input_ids + req.output_ids[:kv_output_tokens]
+        inserted_pages = len(cache_tokens) // self.page_size
+
+        _, redundant_pages = self.radix_cache.insert_and_return(
+            cache_tokens, s.page_table
+        )
+
+        pages_to_free = [p for p in redundant_pages if p in owned_pages]
+        pages_to_free.extend(
+            p for p in s.page_table[inserted_pages:] if p in owned_pages
+        )
+        unique_pages_to_free = list(dict.fromkeys(pages_to_free))
+        self.pool.free(unique_pages_to_free)
+        self.radix_cache.dec_lock_ref(s.cache_node)
 
     # ── Paged prefill (varlen, packed, no padding) ──────────────────────
 
@@ -522,14 +550,31 @@ class Engine:
         assert self.pool is not None
         states = [self._state(r) for r in requests]
         for r, s in zip(requests, states):
-            s.page_table = self.pool.allocate(self.pool.pages_needed(len(r.input_ids)))
-            s.cache_seq_len = 0
+            if not s.page_table:
+                s.page_table = self.pool.allocate(
+                    self.pool.pages_needed(len(r.input_ids))
+                )
+                s.cache_seq_len = 0
+            need = self.pool.pages_needed(len(r.input_ids))
+            if need > len(s.page_table):
+                s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
 
-        seq_lens = [len(r.input_ids) for r in requests]
+        starts = [s.cache_seq_len for s in states]
+        ends = [len(r.input_ids) for r in requests]
+        seq_lens = [end - start for start, end in zip(starts, ends)]
+        if any(n <= 0 for n in seq_lens):
+            raise RuntimeError(
+                "paged prefill needs at least one uncached prompt token"
+            )
+
         cu = _cu_seqlens(seq_lens, self.device)
 
-        flat_ids = [t for r in requests for t in r.input_ids]
-        flat_pos = [p for n in seq_lens for p in range(n)]
+        flat_ids = [
+            t
+            for r, start, end in zip(requests, starts, ends)
+            for t in r.input_ids[start:end]
+        ]
+        flat_pos = [p for start, end in zip(starts, ends) for p in range(start, end)]
         input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
         position_ids = _to_long(flat_pos, self.device).unsqueeze(0)
         last_idx = (cu[1:] - 1).long()
@@ -539,15 +584,21 @@ class Engine:
             logits_indices=last_idx,
         )
         if self.attention_backend == "flashinfer":
-            backend_kwargs = self._fi_kwargs_prefill(states, seq_lens)
+            backend_kwargs = self._fi_kwargs_chunked_prefill(
+                states, starts, ends, seq_lens
+            )
         else:
+            if any(start != 0 for start in starts):
+                raise NotImplementedError(
+                    "radix cache prefill is only implemented for flashinfer backend"
+                )
             backend_kwargs = self._fa_kwargs_prefill(states, seq_lens, cu)
 
         logits, _ = self.model(input_ids, position_ids, **common, **backend_kwargs)
         # (1, num_seqs, vocab) thanks to logits_indices
 
         out: list[int] = []
-        for i, (r, s, n) in enumerate(zip(requests, states, seq_lens)):
+        for i, (r, s, n) in enumerate(zip(requests, states, ends)):
             s.cache_seq_len = n
             out.append(
                 sample_token(logits[0, i : i + 1], r.sampling_params, r.output_ids)
@@ -645,14 +696,54 @@ class Engine:
         )
 
     # ── Paged prefill helpers ───────────────────────────────────────────────
-    def init_paged_prefill_state(self, req: Request) -> None:
+    def lookup_radix_cache(
+        self, req: Request
+    ) -> tuple[list[int], int, RadixNode | None]:
+        """Return a page-aligned cached prefix, leaving work for prefill logits."""
+        if self.radix_cache is None:
+            return [], 0, None
+
+        match = self.radix_cache.match_prefix(req.input_ids)
+        prefix_pages = list(match.matched_pages)
+        prefix_len = match.matched_tokens
+        cache_node = match.last_node
+
+        # Retraction: a full-prompt hit cannot directly produce the first
+        # sampled token, because no prompt-token forward would run.  Drop one
+        # cached page so prefill recomputes the prompt tail and returns logits
+        # for the last prompt token.
+        if prefix_len >= len(req.input_ids) and prefix_pages:
+            prefix_pages.pop()
+            prefix_len -= self.page_size
+            self.radix_cache.metrics.total_hit_tokens -= self.page_size
+            cache_node = cache_node.parent if cache_node is not None else None
+
+        if prefix_len <= 0:
+            return [], 0, None
+        return prefix_pages, prefix_len, cache_node
+
+    def init_paged_prefill_state(
+        self,
+        req: Request,
+        prefix_pages: list[int] | None = None,
+        prefix_len: int = 0,
+        cache_node: RadixNode | None = None,
+    ) -> None:
         """Initialize paged state for a request, allocating its pages."""
         assert self.pool is not None
         s = self._state(req)
         if s.page_table:
             return  # already initialized
-        s.page_table = self.pool.allocate(self.pool.pages_needed(len(req.input_ids)))
-        s.cache_seq_len = 0
+        prefix_pages = list(prefix_pages or [])
+        s.page_table = prefix_pages
+        s.cache_seq_len = prefix_len
+        s.cache_node = cache_node
+        s.cache_hit_tokens = prefix_len
+        req.cache_hit_tokens = prefix_len
+
+        needed_pages = self.pool.pages_needed(len(req.input_ids)) - len(prefix_pages)
+        if needed_pages > 0:
+            s.page_table.extend(self.pool.allocate(needed_pages))
 
     # ── Paged prefill chunked ───────────────────────────────────────────────
     @torch.inference_mode()

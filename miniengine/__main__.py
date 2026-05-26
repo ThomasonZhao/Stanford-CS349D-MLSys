@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="paged: per-step prefill token budget. 0 disables chunked prefill.",
     )
+    p.add_argument(
+        "--disable-radix-cache",
+        action="store_true",
+        help="paged: disable radix prefix cache",
+    )
 
     return p.parse_args()
 
@@ -191,6 +196,7 @@ def main() -> None:
         cuda_graph_max_pages=args.cuda_graph_max_pages,
         attention_backend=args.attention_backend,
         flashinfer_workspace_mb=args.flashinfer_workspace_mb,
+        radix_cache_enabled=not args.disable_radix_cache,
     )
     sched = Scheduler(
         engine=engine,

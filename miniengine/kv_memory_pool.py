@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import Any
 
 import torch
 
@@ -88,6 +89,7 @@ class KVMemoryPool:
 
         # Free list: every page except the reserved scratch page.
         self._free: list[int] = list(range(1, num_pages))
+        self.radix_cache: Any = None
 
         elem = torch.tensor([], dtype=dtype).element_size()
         bytes_total = (
@@ -112,6 +114,8 @@ class KVMemoryPool:
             raise ValueError(f"num_pages must be non-negative, got {num_pages}")
         if num_pages == 0:
             return []
+        if len(self._free) < num_pages and self.radix_cache is not None:
+            self.radix_cache.evict(num_pages - len(self._free))
         if len(self._free) < num_pages:
             raise RuntimeError(
                 f"KV pool exhausted: requested {num_pages}, "
@@ -139,6 +143,13 @@ class KVMemoryPool:
     def num_free(self) -> int:
         """Pages currently available for allocation (excludes scratch)."""
         return len(self._free)
+
+    @property
+    def num_evictable(self) -> int:
+        """Cached pages that could be evicted to satisfy an allocation."""
+        if self.radix_cache is None:
+            return 0
+        return self.radix_cache.num_evictable_pages()
 
     @property
     def kv_caches(self) -> list[tuple[torch.Tensor, torch.Tensor]]:

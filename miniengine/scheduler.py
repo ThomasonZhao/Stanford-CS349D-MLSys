@@ -207,19 +207,18 @@ class Scheduler:
         assert pool is not None, "scheduler in paged mode but engine has no KV pool"
 
         # ── Phase 1: admit + batched paged prefill ──────────────────────
-        with self._lock:
-            to_prefill: list[Request] = []
-            while (
-                self.waiting and len(self.running) + len(to_prefill) < self.max_running
-            ):
-                req = self.waiting[0]
-                if pool.num_free < pool.pages_needed(len(req.input_ids)):
-                    break  # can't fit; wait for pages to free
-                to_prefill.append(self.waiting.popleft())
+        to_prefill_info, _ = self._collect_paged_admissions(len(self.running))
+        to_prefill = [item[0] for item in to_prefill_info]
 
         if to_prefill:
-            for req in to_prefill:
+            for req, prefix_pages, prefix_len, cache_node in to_prefill_info:
                 req.status = RequestStatus.RUNNING
+                self.engine.init_paged_prefill_state(
+                    req,
+                    prefix_pages=prefix_pages,
+                    prefix_len=prefix_len,
+                    cache_node=cache_node,
+                )
             for req, token_id in zip(
                 to_prefill, self.engine.paged_batched_prefill(to_prefill)
             ):
@@ -254,21 +253,11 @@ class Scheduler:
         assert pool is not None, "scheduler in paged mode but engine has no KV pool"
 
         # ── Phase 1: admit + chunked paged prefill ──────────────────────
-        with self._lock:
-            to_admit: list[Request] = []
-            admitted_pages = 0
-            while (
-                self.waiting
-                and len(self.running) + len(self.prefilling) + len(to_admit)
-                < self.max_running
-            ):
-                req = self.waiting[0]
-                needed_pages = pool.pages_needed(len(req.input_ids))
-                if admitted_pages + needed_pages > pool.num_free:
-                    break  # can't fit even a chunk; wait for pages to free
-                admitted_pages += needed_pages
-                to_admit.append(self.waiting.popleft())
-        
+        to_admit_info, admitted_pages = self._collect_paged_admissions(
+            len(self.running) + len(self.prefilling)
+        )
+        to_admit = [item[0] for item in to_admit_info]
+
         logger.info(
             "Admitting %d new requests (%d pages) with chunked prefill (chunk size=%d), currently prefilling %d requests",
             len(to_admit),
@@ -277,16 +266,24 @@ class Scheduler:
             len(self.prefilling),
         )
 
-        for req in to_admit:
+        for req, prefix_pages, prefix_len, cache_node in to_admit_info:
             req.status = RequestStatus.RUNNING
-            self.engine.init_paged_prefill_state(req)  # reserve KV pages for the request
+            self.engine.init_paged_prefill_state(
+                req,
+                prefix_pages=prefix_pages,
+                prefix_len=prefix_len,
+                cache_node=cache_node,
+            )
             self.prefilling.append(req)
 
         # ── Phase 2: chunked prefill  ────────────────────────────────────
         if self.prefilling:
             still_prefilling: list[Request] = []
             for req, token_id in zip(
-                self.prefilling, self.engine.paged_batched_chunked_prefill(self.prefilling, self.prefill_chunk_size)
+                self.prefilling,
+                self.engine.paged_batched_chunked_prefill(
+                    self.prefilling, self.prefill_chunk_size
+                ),
             ):
                 if token_id is None:
                     still_prefilling.append(req)
@@ -303,7 +300,7 @@ class Scheduler:
                 "Chunked prefill step: admitted %d new requests (%d pages), still prefilling %d requests",
                 len(to_admit),
                 admitted_pages,
-                len(still_prefilling)
+                len(still_prefilling),
             )
 
         # ── Phase 3: paged batched decode ───────────────────────────────
@@ -322,6 +319,43 @@ class Scheduler:
         return finished
 
     # ── Helpers ─────────────────────────────────────────────────────────
+
+    def _collect_paged_admissions(
+        self, active_count: int
+    ) -> tuple[list[tuple[Request, list[int], int, object | None]], int]:
+        """Pop waiting requests that fit, locking any borrowed radix pages."""
+        pool = self.engine.pool
+        assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+        cache = getattr(self.engine, "radix_cache", None)
+
+        admitted: list[tuple[Request, list[int], int, object | None]] = []
+        admitted_pages = 0
+        with self._lock:
+            while self.waiting and active_count + len(admitted) < self.max_running:
+                req = self.waiting[0]
+                prefix_pages, prefix_len, cache_node = self.engine.lookup_radix_cache(
+                    req
+                )
+                if cache is not None and cache_node is not None:
+                    cache.inc_lock_ref(cache_node)
+
+                needed_pages = max(
+                    0, pool.pages_needed(len(req.input_ids)) - len(prefix_pages)
+                )
+                available_pages = (
+                    pool.num_free + getattr(pool, "num_evictable", 0) - admitted_pages
+                )
+                if needed_pages > available_pages:
+                    if cache is not None and cache_node is not None:
+                        cache.dec_lock_ref(cache_node)
+                    break
+
+                admitted_pages += needed_pages
+                admitted.append(
+                    (self.waiting.popleft(), prefix_pages, prefix_len, cache_node)
+                )
+
+        return admitted, admitted_pages
 
     def _check_finished(self, req: Request, token_id: int) -> bool:
         """Decide whether a request should stop generating."""
