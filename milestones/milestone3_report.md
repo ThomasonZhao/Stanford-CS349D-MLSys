@@ -160,7 +160,7 @@ Throughput drops as the prefix grows because each request's *total* work grows (
 bench_cache --workload multiturn --num-sessions 16 --turns-per-session 8 \
             --concurrency 8 --max-tokens 4
 ```
-Server flags here are slightly different: **`--prefill-chunk-size 0` (unchunked)** on both cache-on and cache-off. Rationale: multiturn turn-0 prompts are ~1100 tokens, so chunking with chunk=1024 fires at most once and adds plan/launch overhead with no activation-memory benefit. With chunk=1024 the same workload landed at **44 % TTFT reduction** (not enough); switching to unchunked lifts it to 59 % without affecting any other deliverable.
+Server flags here are slightly different: **`--prefill-chunk-size 0` (unchunked)** on both cache-on and cache-off. Rationale: multiturn turn-0 prompts are ~2,300 tokens, so chunking with chunk=1024 fires only two or three times per request — the activation footprint at any single chunk is well below the dynamic budget, so chunking adds plan/launch overhead with no real activation-memory benefit. With chunk=1024 the same workload landed at **44 % TTFT reduction** (not enough); switching to unchunked lifts it to 59 % without affecting any other deliverable.
 
 | Cache | Wall time | Throughput | TTFT p50 / p99 | Hit rate |
 |---|---|---|---|---|
@@ -219,7 +219,6 @@ The bench client logs only the warmup before going silent; the server's schedule
 
 ```
 RuntimeError: KV pool exhausted: requested 1, have 0 free pages
-  in paged_batched_decode
 ```
 
 Server log shows the same traceback fire on every scheduler step after the first decode-time growth attempt. The bench eventually times out (no further client-visible progress).
@@ -261,15 +260,16 @@ A few patterns showed up repeatedly across deliverables — all of them are arti
 
 **1. The L4 is KV-pool-bound, not activation-bound, *most* of the time.** With `--mem-fraction-static 0.85` on Qwen3-8B fp16 the math is:
 
-* Weights + RoPE prealloc + flashinfer workspace + CUDA context ≈ 17.2 GiB
-* Static budget: 0.85 × 22.04 GiB = 18.7 GiB → **KV pool: ~2.9 GiB / 610 pages / ~19,500 tokens**
-* Dynamic (activation) budget: ~3.3 GiB
+* Total usable HBM (after driver reserve): 22.04 GiB ≈ 23.66 GB
+* Weights + RoPE prealloc + flashinfer workspace + CUDA context ≈ 17.2 GB (≈ 16.0 GiB)
+* Static budget: 0.85 × 23.66 GB = 20.1 GB → **KV pool: ~2.9 GB / 610 pages / ~19,500 tokens**
+* Dynamic (activation) budget: ~3.5 GB (≈ 3.3 GiB)
 
 A single packed prefill of 19,500 q-tokens is well within the activation budget, so the scheduler's KV-pool-aware admission gates concurrency long before activations OOM. To trigger an *activation* OOM for deliverable 1 we had to deliberately tighten `--mem-fraction-static` to 0.96 (~1 GiB activation budget) — at the assignment-recommended 0.85, the unchunked path just gracefully head-of-line-blocks instead. This is faithful to the spec ("Find a config that OOMs on your GPU") but worth flagging: **the OOM was constructed, not naturally occurring**, because the L4's static budget math leaves us KV-pool-bound first.
 
 **2. Chunk size is a function of concurrency, not just prompt length.** Deliverable 3's conc=4 +31 % TTFT regression is the per-chunk plan/launch overhead becoming visible at "medium" packed-batch sizes. Picking chunk=1024 (4 chunks per 4096-token prompt) was a *deliberate* trade: chunk=512 was even worse (we measured +22 % regression at conc=1 with chunk=512 in an early iteration), and chunk=2048 (2 chunks per request) reverted to neutral but gives up half the activation-memory headroom chunking exists to protect. chunk=1024 is the smallest chunk that doesn't visibly regress conc=1 while still keeping enough headroom that the OOM demo's unchunked-vs-chunked contrast at conc=8 is clean.
 
-The multiturn deliverable goes the other way — it uses `chunk_size=0` because its turn-0 prompts (~1100 tokens) are *too short* for chunking to do any activation-bounding work. There the per-chunk overhead is pure cost. **Chunk size should be picked per workload's prompt distribution + concurrency, not once globally.**
+The multiturn deliverable goes the other way — it uses `chunk_size=0` because its turn-0 prompts (~2,300 tokens) are still *small enough* that the unchunked packed prefill fits the activation budget at conc=8, so chunking just adds per-chunk overhead with no activation-bounding benefit. **Chunk size should be picked per workload's prompt distribution + concurrency, not once globally.**
 
 **3. Cache wins are bounded by the prefill / decode share.** The multiturn target is "≥ 50 % aggregate throughput reduction." At `--max-tokens=4` and concurrency=8 with 16 sessions, the per-turn time is roughly `prefill + 4 × decode_per_token`. The cache eliminates prefill on hit turns; decode is unchanged. Picking `--max-tokens` low enough that prefill dominates the per-turn time is the only way to make the cache's win visible in *aggregate* throughput. With `max-tokens=64` (`bench_cache`'s default) the same setup is decode-dominated and falls to ~1.1× aggregate throughput; at `max-tokens=4` the prefill share grows enough for the cache's 2.46× per-turn TTFT win to translate to ~1.65× aggregate throughput.
 
