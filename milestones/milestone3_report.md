@@ -1,6 +1,8 @@
 # Milestone 3 — Chunked Prefill + Radix Prefix Cache
 
-All experiments below ran on a single NVIDIA L4 serving `Qwen/Qwen3-8B` (fp16, 8.19 B params) through MiniEngine's paged-mode engine with the FlashInfer attention backend. Raw bench/server logs and curated terminal summaries live under `report_screenshots/M3_final/0N_<name>/`; this report's tables are sourced verbatim from those files.
+Author: 
+
+All experiments below ran on a single NVIDIA L4 serving `Qwen/Qwen3-8B` through MiniEngine's paged-mode engine with the FlashInfer attention backend.
 
 ---
 
@@ -13,16 +15,16 @@ Milestone 2's prefill step packs every admitted request's full prompt into a sin
 The change touches three layers:
 
 * **CLI / engine init** — new `--prefill-chunk-size N` flag (`0` keeps the milestone-2 single-shot path). The scheduler is given `prefill_chunk_size` and switches between `_step_paged_unchunked` and `_step_paged_chunked`.
-* **Per-request state** — `_PagedState` gains `prefill_offset`, `prefill_target`, and an `is_prefill_done` property (`miniengine/engine.py:52-65`) so the scheduler can resume a partially prefilled request across steps.
-* **Scheduler — `_step_paged_chunked`** (`miniengine/scheduler.py:317-414`): admission still reserves the *full* prompt's KV up front (cache integration is the same as the unchunked path), but admitted requests sit in a `prefilling` list. Each step:
+* **Per-request state** — `_PagedState` gains `prefill_offset`, `prefill_target`, and an `is_prefill_done` property so the scheduler can resume a partially prefilled request across steps.
+* **Scheduler — `_step_paged_chunked`**: admission still reserves the *full* prompt's KV up front (cache integration is the same as the unchunked path), but admitted requests sit in a `prefilling` list. Each step:
   1. Admits any new requests that fit and stages them into `prefilling`.
   2. Calls `engine.paged_chunked_prefill(self.prefilling, chunk_size)`, which advances every still-prefilling request by one chunk in a single packed varlen forward and returns the first sampled token *only* for requests whose final chunk just completed.
   3. Moves finished prefills into `self.running` and decodes the running set.
 
-`engine.paged_chunked_prefill` (`engine.py:721-819`) packs all active prefills into one forward with **per-request `[start, end)` ranges** and asks the attention backend for only that chunk's q-token logits:
+`engine.paged_chunked_prefill` packs all active prefills into one forward with **per-request `[start, end)` ranges** and asks the attention backend for only that chunk's q-token logits:
 
 ```python
-# (excerpt) miniengine/engine.py:760-808
+# excerpt from paged_chunked_prefill
 flat_ids = [tok for _, req, _, s, e in active for tok in
             prefill_ids_by_id[req.request_id][s:e]]
 flat_pos = [pos for _, _, _, s, e in active for pos in range(s, e)]
@@ -47,14 +49,14 @@ The cache is a trie of token pages whose nodes own physical KV pages from the po
 
 Three integration points matter:
 
-* **`RadixCache.match_prefix`** (`miniengine/radix_cache.py:133-187`) walks the trie one page at a time and returns `MatchResult(matched_pages, matched_tokens, last_node)`. The match is clamped to a `max_tokens` cap that the scheduler computes as `(prefill_len - 1) // page_size * page_size`, guaranteeing at least one token still needs prefill so we can sample a first generated token from real logits.
-* **Scheduler admission** (`scheduler.py:476-522`) — `match_prefix` → `inc_lock_ref` (pin matched nodes against eviction while in-flight) → `pool.allocate(fresh_needed)` for the suffix → assemble `state.page_table = cached_pages + fresh_pages`. The state's `cache_hit_tokens` is surfaced in HTTP `usage`. If the allocation raises, the cache lock is released and the request is requeued.
+* **`RadixCache.match_prefix`** walks the trie one page at a time and returns `MatchResult(matched_pages, matched_tokens, last_node)`. The match is clamped to a `max_tokens` cap that the scheduler computes as `(prefill_len - 1) // page_size * page_size`, guaranteeing at least one token still needs prefill so we can sample a first generated token from real logits.
+* **Scheduler admission** — `match_prefix` → `inc_lock_ref` (pin matched nodes against eviction while in-flight) → `pool.allocate(fresh_needed)` for the suffix → assemble `state.page_table = cached_pages + fresh_pages`. The state's `cache_hit_tokens` is surfaced in HTTP `usage`. If the allocation raises, the cache lock is released and the request is requeued.
 * **Pool integration** — `KVMemoryPool.allocate` now consults a registered `evict_cb` (the radix cache's `evict`) before raising on free-list exhaustion. The cache walks oldest-`last_access` leaves, skips `ref_count > 0` (locked) nodes, frees the underlying pool pages, and recurses upward to prune empty parents. Pool free-list and cache state can never disagree because the cache *is* the pool's eviction hook.
 
 Two policy details worth flagging:
 
 * **Cache against prompt + generation.** When a request retires, the scheduler inserts the concatenation of `input_ids + output_ids` (page-aligned) into the trie. Multi-turn requests therefore hit on the *prior turn's response* too, not just on what the user re-sent.
-* **Lock counting follows the path to root.** `inc_lock_ref` / `dec_lock_ref` walk parent pointers (`radix_cache.py:191-204`), so locking the deepest matched node automatically pins its ancestors. This matches SGLang's invariant that eviction can only happen on leaves.
+* **Lock counting follows the path to root.** `inc_lock_ref` / `dec_lock_ref` walk parent pointers, so locking the deepest matched node automatically pins its ancestors. This matches SGLang's invariant that eviction can only happen on leaves.
 
 ### 1.3 Decode-time retraction (bonus)
 
@@ -62,19 +64,19 @@ Even with chunking and the cache, decode-time KV growth is unpredictable: once a
 
 Three pieces:
 
-* **A typed `PagedDecodeOOM`** (`engine.py:67-84`) raised from `paged_batched_decode` whenever a per-request `pool.allocate(1)` fails during decode growth, after the pool's `evict_cb` (the cache's `evict`) has already tried to free unlocked pages (`engine.py:1024-1036`).
-* **Victim selection** (`scheduler.py:30-70`) — a pure function over `(running + prefilling)`. Heuristic:
+* **A typed `PagedDecodeOOM`** raised from `paged_batched_decode` whenever a per-request `pool.allocate(1)` fails during decode growth, after the pool's `evict_cb` (the cache's `evict`) has already tried to free unlocked pages.
+* **Victim selection** — a pure function over `(running + prefilling)`. Heuristic:
   1. Prefer the request whose `allocate(1)` failed (it's the one currently causing pain).
   2. Otherwise, free the most KV pages possible (largest `len(page_table)`).
   3. Break ties by largest remaining output budget (it has the most work left, retracting it reclaims the most future page growth).
   4. Final tie-break: youngest `arrival_time`, intentionally last so FCFS fairness is preserved for older requests.
 * **Cleanup** — `engine.retract_paged_state(req)` frees pool-owned pages, unlocks (but does not free) the radix-cache-borrowed pages, `dec_lock_ref`s the cache node, and resets the `_PagedState` fields (`page_table`, `cache_seq_len`, `prefill_offset`, `cache_node`). On re-admission, the engine's `paged_prefill_input_ids` returns `input_ids + output_ids_so_far` so the replay restores the client-visible prefix without re-streaming tokens to the client.
 
-The scheduler integrates retraction in `_paged_decode_with_retraction` (`scheduler.py:424-451`): on `PagedDecodeOOM`, pick a victim, retract it, retry decode. Bounded by `len(running) + len(prefilling)` iterations to guarantee forward progress.
+The scheduler integrates retraction in `_paged_decode_with_retraction`: on `PagedDecodeOOM`, pick a victim, retract it, retry decode. Bounded by `len(running) + len(prefilling)` iterations to guarantee forward progress.
 
 ### 1.4 Engine bug-fix carried into milestone 3
 
-While bringing the engine up on the L4, the KV pool kept sizing to zero at the recommended `--mem-fraction-static 0.85`. Root cause: `_compute_kv_pool_bytes` calls `torch.cuda.mem_get_info` *after* weight loading, but `from_pretrained` leaves several GiB of intermediate buffers in torch's allocator cache — `mem_get_info` reports those as "used" even though they're free to torch. Calling `torch.cuda.empty_cache()` before the measurement restores the expected ~2.9 GiB / 610-page pool (`engine.py:323-327`, committed as `f9bad28`).
+While bringing the engine up on the L4, the KV pool kept sizing to zero at the recommended `--mem-fraction-static 0.85`. Root cause: `_compute_kv_pool_bytes` calls `torch.cuda.mem_get_info` *after* weight loading, but `from_pretrained` leaves several GiB of intermediate buffers in torch's allocator cache — `mem_get_info` reports those as "used" even though they're free to torch. Calling `torch.cuda.empty_cache()` before the measurement restores the expected ~2.9 GiB / 610-page pool.
 
 ---
 
@@ -263,22 +265,22 @@ bench_retraction_oom --num-requests 12 --concurrency 12 --max-tokens 512
 ```
 Server: `--kv-pool-gb 1.0 --prefill-chunk-size 1024` (the 1 GiB pool ≈ 113 pages = 3,616 tokens is too small for 12 concurrent decoders to grow into).
 
-#### Deliverable 8 — Baseline (parent commit `f9bad28`, no retraction code)
+#### Deliverable 8 — Baseline (no retraction code)
 
 The bench client logs only the warmup before going silent; the server's scheduler thread crashes repeatedly with
 
 ```
 RuntimeError: KV pool exhausted: requested 1, have 0 free pages
-  at miniengine/engine.py:936 in paged_batched_decode
+  in paged_batched_decode
 ```
 
 Server log shows the same traceback fire on every scheduler step after the first decode-time growth attempt. The bench eventually times out (no further client-visible progress).
 
-*Evidence:* `08_retraction_baseline/{bench.log, server.trimmed.log, SCREENSHOT.txt}`. (The full 1.7 GiB crash-loop server log lived on the L4 and was trimmed to head + tail before commit; all unique evidence is preserved in the trimmed copy.)
+*Evidence:* `08_retraction_baseline/{bench.log, server.trimmed.log, SCREENSHOT.txt}`. (The full 1.7 GiB crash-loop server log was trimmed to head + tail; all unique evidence is preserved in the trimmed copy.)
 
 [INSERT SCREENSHOT — terminal `cat 08_retraction_baseline/SCREENSHOT.txt`]
 
-#### Deliverable 9 — With retraction (current commit `2243c54`)
+#### Deliverable 9 — With retraction
 
 Identical workload, retraction code present:
 
@@ -343,8 +345,8 @@ The multiturn deliverable goes the other way — it uses `chunk_size=0` because 
 
 The milestone-2 engine already does iteration-level batching, packed varlen prefill, and paged KV with FlashInfer / flash-attn varlen kernels. The features added in this milestone are *not* about batching — they're about **memory pressure management**:
 
-* **Chunked prefill** caps a single forward's activation footprint at `chunk_size × |active prefills|`, decoupling activation memory from prompt length. The implementation re-uses the existing packed varlen prefill path; the addition is per-request `(start, end)` slicing and `prefill_offset` bookkeeping (`engine.paged_chunked_prefill`, `_PagedState.is_prefill_done`). Cost: per-chunk plan/launch overhead at moderate concurrency, characterized above.
-* **Radix prefix cache with page-granular matching, lock pinning, and pool-integrated eviction.** Page-granular matching keeps the engine's attention metadata (page table + last-page slot mapping) intact — cheaper than token-granular matching, with the trade-off that hits are rounded down to the nearest page boundary. Lock pinning (`inc_lock_ref`/`dec_lock_ref` walking parent pointers, `radix_cache.py:191-204`) guarantees in-flight requests can't be evicted from under themselves. Pool integration via `evict_cb` means the cache and pool free list can never disagree: `pool.allocate` always tries `cache.evict()` before raising OOM. The cache also matches against `prompt + generation`, so multi-turn requests hit on the prior turn's response too (the per-turn hit-rate breakdown in deliverable 6 is direct evidence).
+* **Chunked prefill** caps a single forward's activation footprint at `chunk_size × |active prefills|`, decoupling activation memory from prompt length. The implementation re-uses the existing packed varlen prefill path; the addition is per-request `(start, end)` slicing and `prefill_offset` bookkeeping. Cost: per-chunk plan/launch overhead at moderate concurrency, characterized above.
+* **Radix prefix cache with page-granular matching, lock pinning, and pool-integrated eviction.** Page-granular matching keeps the engine's attention metadata (page table + last-page slot mapping) intact — cheaper than token-granular matching, with the trade-off that hits are rounded down to the nearest page boundary. Lock pinning (`inc_lock_ref`/`dec_lock_ref` walking parent pointers) guarantees in-flight requests can't be evicted from under themselves. Pool integration via `evict_cb` means the cache and pool free list can never disagree: `pool.allocate` always tries `cache.evict()` before raising OOM. The cache also matches against `prompt + generation`, so multi-turn requests hit on the prior turn's response too (the per-turn hit-rate breakdown in deliverable 6 is direct evidence).
 * **Decode-time retraction.** A typed `PagedDecodeOOM` is raised at the exact point in `paged_batched_decode` where a per-request `pool.allocate(1)` fails; the scheduler catches it, picks a victim by an explicit pages-held → remaining-budget → arrival-time ordering, frees the victim's pool pages while preserving its borrowed cache pages, resets the `_PagedState`, and pushes the request back to `waiting` for replay prefill. Bounded by `|running + prefilling|` iterations to guarantee progress.
 
 ### 3.3 Possible future improvements
