@@ -43,14 +43,22 @@ class Scheduler:
         stop()             — gracefully shut down
     """
 
-    def __init__(self, engine: Engine, max_running: int = 16, mode: str = "paged"):
+    def __init__(
+        self,
+        engine: Engine,
+        max_running: int = 16,
+        mode: str = "paged",
+        prefill_chunk_size: int = 0,
+    ):
         self.engine = engine
         self.max_running = max_running
         self.mode = mode
+        self.prefill_chunk_size = prefill_chunk_size
 
         # Queues
         self.waiting: deque[Request] = deque()
         self.running: list[Request] = []
+        self.prefilling: list[Request] = []
 
         # Thread control
         self._lock = threading.Lock()
@@ -92,7 +100,7 @@ class Scheduler:
 
     def _loop(self) -> None:
         while self._running_flag:
-            has_work = bool(self.waiting) or bool(self.running)
+            has_work = bool(self.waiting) or bool(self.running) or bool(self.prefilling)
             if not has_work:
                 time.sleep(0.005)  # idle sleep to avoid busy-waiting
                 continue
@@ -180,6 +188,11 @@ class Scheduler:
         return finished
 
     def _step_paged(self) -> list[Request]:
+        if self.prefill_chunk_size > 0:
+            return self._step_paged_chunked()
+        return self._step_paged_unchunked()
+
+    def _step_paged_unchunked(self) -> list[Request]:
         """
         Paged-mode step — same shape as ``_step_batched`` but:
 
@@ -197,8 +210,7 @@ class Scheduler:
         with self._lock:
             to_prefill: list[Request] = []
             while (
-                self.waiting
-                and len(self.running) + len(to_prefill) < self.max_running
+                self.waiting and len(self.running) + len(to_prefill) < self.max_running
             ):
                 req = self.waiting[0]
                 if pool.num_free < pool.pages_needed(len(req.input_ids)):
@@ -222,6 +234,73 @@ class Scheduler:
         if self.running:
             token_ids = self.engine.paged_batched_decode(self.running)
             still_running: list[Request] = []
+            for req, token_id in zip(self.running, token_ids):
+                req.output_ids.append(token_id)
+                self._stream_token(req, token_id)
+                if self._check_finished(req, token_id):
+                    self._finish_request(req, finished)
+                else:
+                    still_running.append(req)
+            self.running = still_running
+
+        return finished
+
+    def _step_paged_chunked(self) -> list[Request]:
+        """
+        Paged-mode step with chunked prefill.  Same as ``_step_paged_unchunked``
+        """
+        finished = []
+        pool = self.engine.pool
+        assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+
+        # ── Phase 1: admit + chunked paged prefill ──────────────────────
+        with self._lock:
+            to_admit: list[Request] = []
+            admitted_pages = 0
+            while (
+                self.waiting
+                and len(self.running) + len(self.prefilling) + len(to_admit)
+                < self.max_running
+            ):
+                req = self.waiting[0]
+                needed_pages = pool.pages_needed(self.prefill_chunk_size)
+                if admitted_pages + needed_pages > pool.num_free:
+                    break  # can't fit even a chunk; wait for pages to free
+                admitted_pages += needed_pages
+                to_admit.append(self.waiting.popleft())
+
+        for req in to_admit:
+            req.status = RequestStatus.RUNNING
+            self.prefilling.append(req)
+
+        # ── Phase 2: chunked prefill  ────────────────────────────────────
+        if self.prefilling:
+            still_prefilling: list[Request] = []
+            for req, token_id in zip(
+                self.prefilling, self.engine.paged_batched_chunked_prefill(self.prefilling, self.prefill_chunk_size)
+            ):
+                if token_id is None:
+                    still_prefilling.append(req)
+                    continue
+
+                req.output_ids.append(token_id)
+                self._stream_token(req, token_id)
+                if self._check_finished(req, token_id):
+                    self._finish_request(req, finished)
+                else:
+                    self.running.append(req)
+            self.prefilling = still_prefilling
+            logger.info(
+                "Chunked prefill step: admitted %d new requests (%d pages), still prefilling %d requests",
+                len(to_admit),
+                admitted_pages,
+                len(still_prefilling)
+            )
+
+        # ── Phase 3: paged batched decode ───────────────────────────────
+        if self.running:
+            token_ids = self.engine.paged_batched_decode(self.running)
+            still_running = []
             for req, token_id in zip(self.running, token_ids):
                 req.output_ids.append(token_id)
                 self._stream_token(req, token_id)

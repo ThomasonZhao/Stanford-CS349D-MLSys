@@ -191,10 +191,8 @@ class Engine:
                         self._fi_workspace, kv_layout="NHD"
                     )
                 )
-                self._fi_decode_wrapper = (
-                    flashinfer.BatchDecodeWithPagedKVCacheWrapper(
-                        self._fi_workspace, kv_layout="NHD"
-                    )
+                self._fi_decode_wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+                    self._fi_workspace, kv_layout="NHD"
                 )
                 logger.info(
                     "flashinfer backend ready (workspace=%d MB, page_size=%d)",
@@ -646,6 +644,89 @@ class Engine:
             )
         )
 
+    # ── Paged prefill chunked ───────────────────────────────────────────────
+    @torch.inference_mode()
+    def paged_batched_chunked_prefill(
+        self, requests: list[Request], chunk_size: int
+    ) -> list[int | None]:
+        if not requests:
+            return []
+        assert self.pool is not None
+        states = [self._state(r) for r in requests]
+
+        active_requests: list[Request] = []
+        active_states: list[_PagedState] = []
+        starts: list[int] = []
+        ends: list[int] = []
+        chunk_lens: list[int] = []
+
+        for r, s in zip(requests, states):
+            start = s.cache_seq_len
+            remaining = len(r.input_ids) - start
+            if remaining <= 0:
+                # This request is already fully prefetched by previous chunks.
+                continue
+            end = start + min(remaining, chunk_size)
+
+            need = self.pool.pages_needed(end)
+            if need > len(s.page_table):
+                s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
+            active_requests.append(r)
+            active_states.append(s)
+            starts.append(start)
+            ends.append(end)
+            chunk_lens.append(end - start)
+
+        if not active_requests:
+            return [None for _ in requests]
+
+        flat_ids = [
+            t
+            for r, st, en in zip(active_requests, starts, ends)
+            for t in r.input_ids[st:en]
+        ]
+        flat_pos = [
+            p
+            for st, en in zip(starts, ends)
+            for p in range(st, en)
+        ]
+        input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
+        position_ids = _to_long(flat_pos, self.device).unsqueeze(0)
+
+        cu = _cu_seqlens(chunk_lens, self.device)
+        last_idx = (cu[1:] - 1).long()
+        
+        common = dict(
+            kv_pool_caches=self._kv_pool_caches,
+            logits_indices=last_idx,
+        )
+        if self.attention_backend == "flashinfer":
+            backend_kwargs = self._fi_kwargs_chunked_prefill(active_states, starts, ends, chunk_lens)
+        else:
+            raise NotImplementedError("chunked prefill is only implemented for flashinfer backend")
+            # backend_kwargs = self._fa_kwargs_chunked_prefill(active_states, chunk_lens, cu)
+        
+        logits, _ = self.model(input_ids, position_ids, **common, **backend_kwargs)
+        
+        out_by_id: dict[str, int | None] = {}
+        for i, (r, s, end) in enumerate(zip(active_requests, active_states, ends)):
+            s.cache_seq_len = end
+            if end == len(r.input_ids):
+                # This chunk finished prefetching the whole request, so sample the first token.
+                token_id = sample_token(logits[0, i : i + 1], r.sampling_params, r.output_ids)
+                out_by_id[r.request_id] = token_id
+            else:
+                # More chunks remain for this request; don't sample yet.
+                out_by_id[r.request_id] = None
+        return [out_by_id.get(r.request_id, None) for r in requests]
+
+    # ── Backend-specific prefill metadata builders ─────────────────────
+    def _fi_kwargs_chunked_prefill(
+        self, states: list[_PagedState], starts: list[int], ends: list[int], chunk_lens: list[int]
+    ):
+        # TODO
+        pass
+
     # ── Paged decode (varlen, q_len=1 per req) ──────────────────────────
 
     @torch.inference_mode()
@@ -673,9 +754,7 @@ class Engine:
         out: list[int] = []
         for i, (r, s) in enumerate(zip(requests, states)):
             s.cache_seq_len += 1
-            out.append(
-                sample_token(logits[i : i + 1], r.sampling_params, r.output_ids)
-            )
+            out.append(sample_token(logits[i : i + 1], r.sampling_params, r.output_ids))
         return out
 
     def _paged_decode_eager(
@@ -703,9 +782,7 @@ class Engine:
 
     # ── Backend-specific decode metadata builders ──────────────────────
 
-    def _fa_kwargs_decode(
-        self, states: list[_PagedState], batch_size: int
-    ) -> dict:
+    def _fa_kwargs_decode(self, states: list[_PagedState], batch_size: int) -> dict:
         """flash_attn varlen decode metadata (q_len == 1 per request)."""
         ps = self.page_size
         cu_q = _cu_seqlens([1] * batch_size, self.device)
@@ -744,11 +821,7 @@ class Engine:
 
         kv_indptr = _to_int32_cumsum(page_counts, self.device)
         kv_indices = torch.tensor(
-            [
-                p
-                for s, pc in zip(states, page_counts)
-                for p in s.page_table[:pc]
-            ],
+            [p for s, pc in zip(states, page_counts) for p in s.page_table[:pc]],
             dtype=torch.int32,
             device=self.device,
         )
@@ -759,9 +832,7 @@ class Engine:
         )
 
         # The new K/V slot for each request: token index = cache_seq_len.
-        batch_indices = torch.arange(
-            len(states), dtype=torch.int32, device=self.device
-        )
+        batch_indices = torch.arange(len(states), dtype=torch.int32, device=self.device)
         positions = torch.tensor(
             [s.cache_seq_len for s in states],
             dtype=torch.int32,
@@ -993,9 +1064,7 @@ class CudaGraphRunner:
             logits=logits,
         )
 
-    def run(
-        self, requests: list[Request], states: list[_PagedState]
-    ) -> torch.Tensor:
+    def run(self, requests: list[Request], states: list[_PagedState]) -> torch.Tensor:
         B = len(requests)
         bs = next(b for b in self.batch_sizes if b >= B)
         if self.engine.attention_backend == "flashinfer":
@@ -1012,12 +1081,8 @@ class CudaGraphRunner:
         g = self.graphs[bs]
         d = self.device
 
-        g["input_ids"][0, :B].copy_(
-            _to_long([r.output_ids[-1] for r in requests], d)
-        )
-        g["position_ids"][0, :B].copy_(
-            _to_long([s.cache_seq_len for s in states], d)
-        )
+        g["input_ids"][0, :B].copy_(_to_long([r.output_ids[-1] for r in requests], d))
+        g["position_ids"][0, :B].copy_(_to_long([s.cache_seq_len for s in states], d))
         g["slot_mapping"][:B].copy_(
             _to_long(
                 [
@@ -1115,12 +1180,8 @@ class CudaGraphRunner:
             q_data_type=e.dtype,
         )
 
-        g["input_ids"][0, :B].copy_(
-            _to_long([r.output_ids[-1] for r in requests], d)
-        )
-        g["position_ids"][0, :B].copy_(
-            _to_long([s.cache_seq_len for s in states], d)
-        )
+        g["input_ids"][0, :B].copy_(_to_long([r.output_ids[-1] for r in requests], d))
+        g["position_ids"][0, :B].copy_(_to_long([s.cache_seq_len for s in states], d))
         if bs > B:
             g["input_ids"][0, B:].zero_()
             g["position_ids"][0, B:].zero_()

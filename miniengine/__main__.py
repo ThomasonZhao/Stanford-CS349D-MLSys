@@ -139,6 +139,15 @@ def parse_args() -> argparse.Namespace:
         default=32,
         help="paged: max KV pages per sequence the captured graph supports",
     )
+
+    # Milestone-3 flags ───────────────────────────────────────────────
+    p.add_argument(
+        "--prefill-chunk-size",
+        type=int,
+        default=0,
+        help="paged: per-step prefill token budget. 0 disables chunked prefill.",
+    )
+
     return p.parse_args()
 
 
@@ -183,7 +192,12 @@ def main() -> None:
         attention_backend=args.attention_backend,
         flashinfer_workspace_mb=args.flashinfer_workspace_mb,
     )
-    sched = Scheduler(engine=engine, max_running=args.max_running, mode=args.mode)
+    sched = Scheduler(
+        engine=engine,
+        max_running=args.max_running,
+        mode=args.mode,
+        prefill_chunk_size=args.prefill_chunk_size,
+    )
 
     # Wire up the server module globals
     srv.engine = engine
