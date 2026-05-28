@@ -152,6 +152,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="paged: disable radix prefix cache",
     )
+    p.add_argument(
+        "--disable-retraction",
+        action="store_true",
+        help="paged: disable decode-time request retraction",
+    )
 
     return p.parse_args()
 
@@ -203,6 +208,7 @@ def main() -> None:
         max_running=args.max_running,
         mode=args.mode,
         prefill_chunk_size=args.prefill_chunk_size,
+        retraction_enabled=not args.disable_retraction,
     )
 
     # Wire up the server module globals

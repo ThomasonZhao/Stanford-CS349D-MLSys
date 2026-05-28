@@ -49,11 +49,13 @@ class Scheduler:
         max_running: int = 16,
         mode: str = "paged",
         prefill_chunk_size: int = 0,
+        retraction_enabled: bool = True,
     ):
         self.engine = engine
         self.max_running = max_running
         self.mode = mode
         self.prefill_chunk_size = prefill_chunk_size
+        self.retraction_enabled = retraction_enabled
 
         # Queues
         self.waiting: deque[Request] = deque()
@@ -365,6 +367,8 @@ class Scheduler:
 
     def _ensure_decode_capacity(self) -> None:
         """Retract active requests until the next decode allocation fits."""
+        if not self.retraction_enabled:
+            return
         pool = self.engine.pool
         assert pool is not None, "scheduler in paged mode but engine has no KV pool"
 
