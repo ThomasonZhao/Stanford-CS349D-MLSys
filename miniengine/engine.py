@@ -513,6 +513,10 @@ class Engine:
             self._paged_state[req.request_id] = s
         return s
 
+    def prefill_token_ids(self, req: Request) -> list[int]:
+        """Tokens that must be present in KV before sampling the next token."""
+        return req.input_ids + req.output_ids
+
     def free_paged_state(self, req: Request) -> None:
         """Release a request's pages back to the pool."""
         s = self._paged_state.pop(req.request_id, None)
@@ -524,8 +528,7 @@ class Engine:
             return
 
         owned_pages = set(s.page_table[self.pool.pages_needed(s.cache_hit_tokens) :])
-        kv_output_tokens = max(0, s.cache_seq_len - len(req.input_ids))
-        cache_tokens = req.input_ids + req.output_ids[:kv_output_tokens]
+        cache_tokens = self.prefill_token_ids(req)[: s.cache_seq_len]
         inserted_pages = len(cache_tokens) // self.page_size
 
         _, redundant_pages = self.radix_cache.insert_and_return(
@@ -540,6 +543,33 @@ class Engine:
         self.pool.free(unique_pages_to_free)
         self.radix_cache.dec_lock_ref(s.cache_node)
 
+    def retract_paged_state(self, req: Request) -> None:
+        """Free an active request's KV without marking the request finished."""
+        s = self._paged_state.pop(req.request_id, None)
+        if s is None or self.pool is None:
+            return
+
+        if self.radix_cache is None:
+            self.pool.free(s.page_table)
+            return
+
+        borrowed_pages = self.pool.pages_needed(s.cache_hit_tokens)
+        owned_pages = s.page_table[borrowed_pages:]
+        self.pool.free(owned_pages)
+        self.radix_cache.dec_lock_ref(s.cache_node)
+
+    def paged_decode_page_need(self, requests: list[Request]) -> int:
+        """Pages the next decode step would have to allocate."""
+        assert self.pool is not None
+        total = 0
+        for req in requests:
+            s = self._paged_state.get(req.request_id)
+            if s is None:
+                raise RuntimeError(f"missing paged state for request {req.request_id}")
+            need = self.pool.pages_needed(s.cache_seq_len + 1)
+            total += max(0, need - len(s.page_table))
+        return total
+
     # ── Paged prefill (varlen, packed, no padding) ──────────────────────
 
     @torch.inference_mode()
@@ -549,18 +579,17 @@ class Engine:
             return []
         assert self.pool is not None
         states = [self._state(r) for r in requests]
-        for r, s in zip(requests, states):
+        seq_ids = [self.prefill_token_ids(r) for r in requests]
+        for ids, s in zip(seq_ids, states):
             if not s.page_table:
-                s.page_table = self.pool.allocate(
-                    self.pool.pages_needed(len(r.input_ids))
-                )
+                s.page_table = self.pool.allocate(self.pool.pages_needed(len(ids)))
                 s.cache_seq_len = 0
-            need = self.pool.pages_needed(len(r.input_ids))
+            need = self.pool.pages_needed(len(ids))
             if need > len(s.page_table):
                 s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
 
         starts = [s.cache_seq_len for s in states]
-        ends = [len(r.input_ids) for r in requests]
+        ends = [len(ids) for ids in seq_ids]
         seq_lens = [end - start for start, end in zip(starts, ends)]
         if any(n <= 0 for n in seq_lens):
             raise RuntimeError(
@@ -571,8 +600,8 @@ class Engine:
 
         flat_ids = [
             t
-            for r, start, end in zip(requests, starts, ends)
-            for t in r.input_ids[start:end]
+            for ids, start, end in zip(seq_ids, starts, ends)
+            for t in ids[start:end]
         ]
         flat_pos = [p for start, end in zip(starts, ends) for p in range(start, end)]
         input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
@@ -703,7 +732,8 @@ class Engine:
         if self.radix_cache is None:
             return [], 0, None
 
-        match = self.radix_cache.match_prefix(req.input_ids)
+        seq_ids = self.prefill_token_ids(req)
+        match = self.radix_cache.match_prefix(seq_ids)
         prefix_pages = list(match.matched_pages)
         prefix_len = match.matched_tokens
         cache_node = match.last_node
@@ -712,7 +742,7 @@ class Engine:
         # sampled token, because no prompt-token forward would run.  Drop one
         # cached page so prefill recomputes the prompt tail and returns logits
         # for the last prompt token.
-        if prefix_len >= len(req.input_ids) and prefix_pages:
+        if prefix_len >= len(seq_ids) and prefix_pages:
             prefix_pages.pop()
             prefix_len -= self.page_size
             self.radix_cache.metrics.total_hit_tokens -= self.page_size
@@ -741,7 +771,9 @@ class Engine:
         s.cache_hit_tokens = prefix_len
         req.cache_hit_tokens = prefix_len
 
-        needed_pages = self.pool.pages_needed(len(req.input_ids)) - len(prefix_pages)
+        needed_pages = self.pool.pages_needed(
+            len(self.prefill_token_ids(req))
+        ) - len(prefix_pages)
         if needed_pages > 0:
             s.page_table.extend(self.pool.allocate(needed_pages))
 
@@ -754,16 +786,18 @@ class Engine:
             return []
         assert self.pool is not None
         states = [self._state(r) for r in requests]
+        seq_ids = [self.prefill_token_ids(r) for r in requests]
 
         active_requests: list[Request] = []
         active_states: list[_PagedState] = []
+        active_seq_ids: list[list[int]] = []
         starts: list[int] = []
         ends: list[int] = []
         chunk_lens: list[int] = []
 
-        for r, s in zip(requests, states):
+        for r, s, ids in zip(requests, states, seq_ids):
             start = s.cache_seq_len
-            remaining = len(r.input_ids) - start
+            remaining = len(ids) - start
             if remaining <= 0:
                 # This request is already fully prefetched by previous chunks.
                 continue
@@ -774,6 +808,7 @@ class Engine:
                 s.page_table.extend(self.pool.allocate(need - len(s.page_table)))
             active_requests.append(r)
             active_states.append(s)
+            active_seq_ids.append(ids)
             starts.append(start)
             ends.append(end)
             chunk_lens.append(end - start)
@@ -783,8 +818,8 @@ class Engine:
 
         flat_ids = [
             t
-            for r, st, en in zip(active_requests, starts, ends)
-            for t in r.input_ids[st:en]
+            for ids, st, en in zip(active_seq_ids, starts, ends)
+            for t in ids[st:en]
         ]
         flat_pos = [p for st, en in zip(starts, ends) for p in range(st, en)]
         input_ids = _to_long(flat_ids, self.device).unsqueeze(0)  # (1, T) packed
@@ -810,9 +845,11 @@ class Engine:
         logits, _ = self.model(input_ids, position_ids, **common, **backend_kwargs)
 
         out_by_id: dict[str, int | None] = {}
-        for i, (r, s, end) in enumerate(zip(active_requests, active_states, ends)):
+        for i, (r, s, ids, end) in enumerate(
+            zip(active_requests, active_states, active_seq_ids, ends)
+        ):
             s.cache_seq_len = end
-            if end == len(r.input_ids):
+            if end == len(ids):
                 # This chunk finished prefetching the whole request, so sample the first token.
                 token_id = sample_token(
                     logits[0, i : i + 1], r.sampling_params, r.output_ids

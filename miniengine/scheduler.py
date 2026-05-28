@@ -231,6 +231,8 @@ class Scheduler:
 
         # ── Phase 2: paged batched decode ───────────────────────────────
         if self.running:
+            self._ensure_decode_capacity()
+        if self.running:
             token_ids = self.engine.paged_batched_decode(self.running)
             still_running: list[Request] = []
             for req, token_id in zip(self.running, token_ids):
@@ -305,6 +307,8 @@ class Scheduler:
 
         # ── Phase 3: paged batched decode ───────────────────────────────
         if self.running:
+            self._ensure_decode_capacity()
+        if self.running:
             token_ids = self.engine.paged_batched_decode(self.running)
             still_running = []
             for req, token_id in zip(self.running, token_ids):
@@ -340,7 +344,9 @@ class Scheduler:
                     cache.inc_lock_ref(cache_node)
 
                 needed_pages = max(
-                    0, pool.pages_needed(len(req.input_ids)) - len(prefix_pages)
+                    0,
+                    pool.pages_needed(len(self.engine.prefill_token_ids(req)))
+                    - len(prefix_pages),
                 )
                 available_pages = (
                     pool.num_free + getattr(pool, "num_evictable", 0) - admitted_pages
@@ -356,6 +362,57 @@ class Scheduler:
                 )
 
         return admitted, admitted_pages
+
+    def _ensure_decode_capacity(self) -> None:
+        """Retract active requests until the next decode allocation fits."""
+        pool = self.engine.pool
+        assert pool is not None, "scheduler in paged mode but engine has no KV pool"
+
+        while self.running:
+            needed_pages = self.engine.paged_decode_page_need(self.running)
+            available_pages = pool.num_free + getattr(pool, "num_evictable", 0)
+            if needed_pages <= available_pages:
+                return
+
+            victim = self._retract_one_request()
+            if victim is None:
+                return
+
+            logger.warning(
+                "Retracted request %s for decode capacity "
+                "(needed_pages=%d, available_pages=%d, output_len=%d)",
+                victim.request_id,
+                needed_pages,
+                available_pages,
+                victim.num_output_tokens,
+            )
+
+    def _retract_one_request(self) -> Request | None:
+        """Free one active request's paged KV and put it back in waiting."""
+        if self.prefilling:
+            victim = self._pick_retraction_victim(self.prefilling)
+            self.prefilling.remove(victim)
+        elif self.running:
+            victim = self._pick_retraction_victim(self.running)
+            self.running.remove(victim)
+        else:
+            return None
+
+        self.engine.retract_paged_state(victim)
+        victim.status = RequestStatus.WAITING
+        with self._lock:
+            self.waiting.append(victim)
+        return victim
+
+    def _pick_retraction_victim(self, candidates: list[Request]) -> Request:
+        """Pick largest remaining decode work, breaking ties by youngest."""
+        return max(
+            candidates,
+            key=lambda req: (
+                req.sampling_params.max_new_tokens - len(req.output_ids),
+                req.arrival_time,
+            ),
+        )
 
     def _check_finished(self, req: Request, token_id: int) -> bool:
         """Decide whether a request should stop generating."""
