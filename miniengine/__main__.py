@@ -158,6 +158,21 @@ def parse_args() -> argparse.Namespace:
         help="paged: disable decode-time request retraction",
     )
 
+    # Milestone-4 flags ───────────────────────────────────────────────
+    p.add_argument(
+        "--cpu-cache-size-gb",
+        type=float,
+        default=0.0,
+        help="paged: CPU KV cache tier size in GiB. 0 keeps the radix "
+        "cache GPU-only.",
+    )
+    p.add_argument(
+        "--hicache-overlap",
+        action="store_true",
+        help="Enable overlap of GPU compute with CPU-GPU KV page transfers. "
+        "Requires --cpu-cache-size-gb > 0.",
+    )
+
     return p.parse_args()
 
 
@@ -202,6 +217,8 @@ def main() -> None:
         attention_backend=args.attention_backend,
         flashinfer_workspace_mb=args.flashinfer_workspace_mb,
         radix_cache_enabled=not args.disable_radix_cache,
+        cpu_cache_size_gb=args.cpu_cache_size_gb,
+        hicache_overlap=args.hicache_overlap,
     )
     sched = Scheduler(
         engine=engine,

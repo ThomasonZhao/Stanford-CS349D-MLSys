@@ -30,9 +30,10 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 
 from miniengine.core import Request
+from miniengine.hicache import HiRadixCache
 from miniengine.kv_memory_pool import KVMemoryPool
 from miniengine.model import CausalLM, FlashInferContext, ModelConfig, load_weights
-from miniengine.radix_cache import RadixCache, RadixNode
+from miniengine.radix_cache import RadixCache
 from miniengine.sampler import sample_token
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,8 @@ class Engine:
         attention_backend: str = "flashinfer",
         flashinfer_workspace_mb: int = 128,
         radix_cache_enabled: bool = True,
+        cpu_cache_size_gb: float = 0.0,
+        hicache_overlap: bool = False,
     ):
         if cuda_graph and mode != "paged":
             raise ValueError("cuda_graph requires mode='paged'")
@@ -142,7 +145,7 @@ class Engine:
 
         # ── Paged-mode setup (only when mode == "paged") ───────────────
         self.pool: KVMemoryPool | None = None
-        self.radix_cache: RadixCache | None = None
+        self.radix_cache: RadixCache | HiRadixCache | None = None
         self.page_size = page_size
         self.max_position = max_position
         self._kv_pool_caches: list[tuple[torch.Tensor, torch.Tensor]] | None = None
@@ -175,7 +178,16 @@ class Engine:
                 bytes_budget=kv_pool_bytes,
             )
             self._kv_pool_caches = self.pool.kv_caches
-            self.radix_cache = RadixCache(self.pool) if radix_cache_enabled else None
+            if radix_cache_enabled and cpu_cache_size_gb > 0:
+                self.radix_cache = HiRadixCache(
+                    self.pool,
+                    cpu_cache_size_gb=cpu_cache_size_gb,
+                    overlap=hicache_overlap,
+                )
+            elif radix_cache_enabled:
+                self.radix_cache = RadixCache(self.pool)
+            else:
+                self.radix_cache = None
             self.pool.radix_cache = self.radix_cache
             # Pre-grow RoPE so the paged forward stays alloc-free
             # (graph-capture and torch.compile safe).
@@ -727,7 +739,7 @@ class Engine:
     # ── Paged prefill helpers ───────────────────────────────────────────────
     def lookup_radix_cache(
         self, req: Request
-    ) -> tuple[list[int], int, RadixNode | None]:
+    ) -> tuple[list[int], int, object | None]:
         """Return a page-aligned cached prefix, leaving work for prefill logits."""
         if self.radix_cache is None:
             return [], 0, None
@@ -757,7 +769,7 @@ class Engine:
         req: Request,
         prefix_pages: list[int] | None = None,
         prefix_len: int = 0,
-        cache_node: RadixNode | None = None,
+        cache_node: object | None = None,
     ) -> None:
         """Initialize paged state for a request, allocating its pages."""
         assert self.pool is not None

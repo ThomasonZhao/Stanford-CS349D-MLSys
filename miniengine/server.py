@@ -77,7 +77,7 @@ async def cache_stats():
         return {"enabled": False}
     m = cache.metrics
     pool = engine.pool
-    return {
+    data = {
         "enabled": True,
         "hit_rate": m.hit_rate,
         "total_lookups": m.total_lookups,
@@ -89,6 +89,26 @@ async def cache_stats():
         "pool_num_free": pool.num_free if pool is not None else 0,
         "pool_num_evictable": getattr(pool, "num_evictable", 0),
     }
+    for name in (
+        "num_gpu_cached_pages",
+        "num_cpu_cached_pages",
+    ):
+        data[name] = getattr(cache, name, 0)
+    for name in (
+        "total_demoted_pages",
+        "total_promoted_pages",
+        "total_cpu_evicted_pages",
+        "total_gpu_hit_tokens",
+        "total_cpu_hit_tokens",
+        "promote_time_ms",
+        "demote_time_ms",
+    ):
+        data[name] = getattr(m, name, 0)
+    cpu_pool = getattr(cache, "cpu_pool", None)
+    if cpu_pool is not None:
+        data["cpu_pool_num_free"] = cpu_pool.num_free
+        data["cpu_pool_num_pages"] = cpu_pool.num_pages
+    return data
 
 
 @app.get("/v1/models")
