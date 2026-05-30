@@ -1,0 +1,23 @@
+{
+  "cpu_pool_num_free": 1496,
+  "cpu_pool_num_pages": 1820,
+  "demote_time_ms": 2238.7299990423344,
+  "enabled": true,
+  "hit_rate": 0.7602654625897755,
+  "num_cached_pages": 515,
+  "num_cpu_cached_pages": 324,
+  "num_gpu_cached_pages": 191,
+  "pool_num_evictable": 191,
+  "pool_num_free": 14,
+  "promote_time_ms": 3340.377352978976,
+  "total_cpu_evicted_pages": 0,
+  "total_cpu_hit_tokens": 39808,
+  "total_demoted_pages": 1568,
+  "total_evicted_pages": 0,
+  "total_gpu_hit_tokens": 10368,
+  "total_hit_tokens": 50176,
+  "total_inserted_pages": 515,
+  "total_lookups": 256,
+  "total_promoted_pages": 1244,
+  "total_query_tokens": 65998
+}
