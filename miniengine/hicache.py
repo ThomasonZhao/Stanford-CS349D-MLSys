@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 GPU_TIER = "gpu"
 CPU_TIER = "cpu"
+PENDING_CPU_TIER = "pending_cpu"
 
 
 @dataclass
@@ -44,12 +45,53 @@ class HiCacheMetrics:
     total_cpu_hit_tokens: int = 0
     promote_time_ms: float = 0.0
     demote_time_ms: float = 0.0
+    promote_copy_time_ms: float = 0.0
+    promote_wait_time_ms: float = 0.0
+    promote_hidden_time_ms: float = 0.0
+    demote_copy_time_ms: float = 0.0
+    demote_wait_time_ms: float = 0.0
+    demote_hidden_time_ms: float = 0.0
+    async_demote_submitted_pages: int = 0
+    async_demote_completed_pages: int = 0
+    async_demote_cancelled_pages: int = 0
+    async_promote_submitted_pages: int = 0
+    async_promote_completed_pages: int = 0
 
     @property
     def hit_rate(self) -> float:
         if self.total_query_tokens == 0:
             return 0.0
         return self.total_hit_tokens / self.total_query_tokens
+
+    @property
+    def demote_hidden_ratio(self) -> float:
+        if self.demote_copy_time_ms == 0:
+            return 0.0
+        return self.demote_hidden_time_ms / self.demote_copy_time_ms
+
+    @property
+    def promote_hidden_ratio(self) -> float:
+        if self.promote_copy_time_ms == 0:
+            return 0.0
+        return self.promote_hidden_time_ms / self.promote_copy_time_ms
+
+
+@dataclass
+class _PendingDemotion:
+    node: "HiRadixNode"
+    gpu_pages: list[int]
+    cpu_pages: list[int]
+    start_event: torch.cuda.Event
+    end_event: torch.cuda.Event
+    submitted_at: float
+
+
+@dataclass
+class _PendingPromotion:
+    cpu_pages: list[int]
+    start_event: torch.cuda.Event
+    end_event: torch.cuda.Event
+    submitted_at: float
 
 
 class CPUKVMemoryPool:
@@ -269,19 +311,24 @@ class HiRadixCache:
             self.copy_stream: torch.cuda.Stream | None = torch.cuda.Stream()
         else:
             self.copy_stream = None
+        self._pending_demotions: list[_PendingDemotion] = []
+        self._pending_promotions: list[_PendingPromotion] = []
 
     # -- Helpers -----------------------------------------------------
 
     @property
     def num_cached_pages(self) -> int:
+        self.poll_async_events()
         return self.num_gpu_cached_pages + self.num_cpu_cached_pages
 
     @property
     def num_gpu_cached_pages(self) -> int:
+        self.poll_async_events()
         return self._count_pages(GPU_TIER)
 
     @property
     def num_cpu_cached_pages(self) -> int:
+        self.poll_async_events()
         return self._count_pages(CPU_TIER)
 
     def _count_pages(self, tier: str) -> int:
@@ -296,6 +343,7 @@ class HiRadixCache:
 
     def num_evictable_pages(self) -> int:
         """GPU pages that can be freed by demotion right now."""
+        self.poll_async_events()
         count = 0
         stack = list(self.root.children.values())
         while stack:
@@ -308,10 +356,26 @@ class HiRadixCache:
             stack.extend(node.children.values())
         return count
 
+    @property
+    def pending_demote_pages(self) -> int:
+        return sum(len(p.gpu_pages) for p in self._pending_demotions)
+
+    @property
+    def pending_promote_pages(self) -> int:
+        return sum(len(p.cpu_pages) for p in self._pending_promotions)
+
+    def poll_async_events(self) -> None:
+        """Retire completed async copies without blocking the host."""
+        if self.copy_stream is None:
+            return
+        self._drain_pending_promotions(wait=False)
+        self._drain_pending_demotions(wait=False)
+
     # -- Lookup ------------------------------------------------------
 
     def match_prefix(self, tokens: list[int]) -> MatchResult:
         """Find the longest page-aligned prefix, promoting CPU hits to GPU."""
+        self.poll_async_events()
         self.metrics.total_lookups += 1
         self.metrics.total_query_tokens += len(tokens)
 
@@ -336,7 +400,7 @@ class HiRadixCache:
             else:
                 gpu_hit_tokens += len(child.key)
 
-            if child.tier != GPU_TIER:
+            if child.tier not in (GPU_TIER, PENDING_CPU_TIER):
                 raise RuntimeError("HiCache lookup failed to promote CPU page to GPU")
 
             child.last_access = now
@@ -383,6 +447,7 @@ class HiRadixCache:
         self, tokens: list[int], pages: list[int]
     ) -> tuple[HiRadixNode, list[int]]:
         """Insert GPU pages and return request-owned duplicates to caller."""
+        self.poll_async_events()
         node = self.root
         redundant_pages: list[int] = []
         num_pages = min(len(tokens) // self.page_size, len(pages))
@@ -413,6 +478,7 @@ class HiRadixCache:
             node = child
             self.metrics.total_inserted_pages += 1
 
+        self._maybe_schedule_background_demotions()
         return node, redundant_pages
 
     # -- GPU eviction / demotion ------------------------------------
@@ -422,13 +488,30 @@ class HiRadixCache:
         if n_pages_needed <= 0:
             return 0
 
-        freed = 0
-        while freed < n_pages_needed:
+        start_free = self.pool.num_free
+        self.poll_async_events()
+
+        while self.pool.num_free - start_free < n_pages_needed:
             victim = self._pick_lru_gpu_victim()
             if victim is None:
                 break
-            freed += self._demote_node(victim)
-        return freed
+            self._demote_node(victim)
+            self.poll_async_events()
+            if (
+                self.copy_stream is not None
+                and self.pool.num_free - start_free < n_pages_needed
+                and self._pending_demotions
+            ):
+                self._drain_pending_demotions(wait=True, max_items=1)
+
+        while (
+            self.copy_stream is not None
+            and self.pool.num_free - start_free < n_pages_needed
+            and self._pending_demotions
+        ):
+            self._drain_pending_demotions(wait=True, max_items=1)
+
+        return max(0, self.pool.num_free - start_free)
 
     def _pick_lru_gpu_victim(self) -> HiRadixNode | None:
         victims: list[HiRadixNode] = []
@@ -456,6 +539,14 @@ class HiRadixCache:
         self._ensure_cpu_free_pages(len(gpu_pages))
         cpu_pages = self.cpu_pool.allocate(len(gpu_pages))
 
+        if self.copy_stream is not None:
+            try:
+                self._schedule_gpu_to_cpu(node, gpu_pages, cpu_pages)
+            except Exception:
+                self.cpu_pool.free(cpu_pages)
+                raise
+            return 0
+
         try:
             self._copy_gpu_to_cpu(gpu_pages, cpu_pages)
         except Exception:
@@ -467,13 +558,68 @@ class HiRadixCache:
         node.last_access = time.monotonic()
         self.pool.free(gpu_pages)
 
+        elapsed_ms = (time.perf_counter() - start) * 1000
         self.metrics.total_demoted_pages += len(gpu_pages)
-        self.metrics.demote_time_ms += (time.perf_counter() - start) * 1000
+        self.metrics.demote_time_ms += elapsed_ms
+        self.metrics.demote_copy_time_ms += elapsed_ms
         return len(gpu_pages)
+
+    def _schedule_gpu_to_cpu(
+        self,
+        node: HiRadixNode,
+        gpu_pages: list[int],
+        cpu_pages: list[int],
+    ) -> None:
+        assert self.copy_stream is not None
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        with torch.cuda.stream(self.copy_stream):
+            start_event.record()
+            self.cpu_pool.copy_gpu_to_cpu(
+                self.pool,
+                gpu_pages,
+                cpu_pages,
+                non_blocking=True,
+            )
+            end_event.record()
+        node.tier = PENDING_CPU_TIER
+        node.last_access = time.monotonic()
+        self._pending_demotions.append(
+            _PendingDemotion(
+                node=node,
+                gpu_pages=gpu_pages,
+                cpu_pages=cpu_pages,
+                start_event=start_event,
+                end_event=end_event,
+                submitted_at=time.perf_counter(),
+            )
+        )
+        self.metrics.async_demote_submitted_pages += len(gpu_pages)
+
+    def _maybe_schedule_background_demotions(self) -> None:
+        if self.copy_stream is None:
+            return
+        self.poll_async_events()
+        usable_pages = max(1, self.pool.num_pages - 1)
+        target_free = max(1, usable_pages // 10)
+        projected_free = self.pool.num_free + self.pending_demote_pages
+        while projected_free < target_free:
+            victim = self._pick_lru_gpu_victim()
+            if victim is None:
+                break
+            n = len(victim.pages)
+            self._demote_node(victim)
+            projected_free += n
 
     # -- CPU eviction / permanent drop -------------------------------
 
     def _ensure_cpu_free_pages(self, needed: int) -> None:
+        if self.copy_stream is not None and self.cpu_pool.num_free < needed:
+            self._drain_pending_promotions(wait=False)
+            self._drain_pending_demotions(wait=False)
+        if self.copy_stream is not None and self.cpu_pool.num_free < needed:
+            self._drain_pending_promotions(wait=True)
+            self._drain_pending_demotions(wait=True)
         while self.cpu_pool.num_free < needed:
             victim = self._pick_lru_cpu_victim()
             if victim is None:
@@ -517,6 +663,8 @@ class HiRadixCache:
                 cpu_pages.extend(cur.pages)
             elif cur.tier == GPU_TIER:
                 gpu_pages.extend(cur.pages)
+            elif cur.tier == PENDING_CPU_TIER:
+                raise RuntimeError("cannot CPU-evict a subtree with pending demotions")
             stack.extend(cur.children.values())
 
         parent = node.parent
@@ -532,6 +680,105 @@ class HiRadixCache:
         self.metrics.total_evicted_pages += len(cpu_pages) + len(gpu_pages)
         return len(cpu_pages)
 
+    def _drain_pending_demotions(
+        self,
+        *,
+        wait: bool,
+        max_items: int | None = None,
+        force_cancel: bool = False,
+    ) -> int:
+        if not self._pending_demotions:
+            return 0
+
+        freed_gpu_pages = 0
+        remaining: list[_PendingDemotion] = []
+        processed = 0
+        for pending in self._pending_demotions:
+            if max_items is not None and processed >= max_items:
+                remaining.append(pending)
+                continue
+
+            was_ready = pending.end_event.query()
+            wait_ms = 0.0
+            if not was_ready:
+                if not wait:
+                    remaining.append(pending)
+                    continue
+                wait_start = time.perf_counter()
+                pending.end_event.synchronize()
+                wait_ms = (time.perf_counter() - wait_start) * 1000
+
+            copy_ms = pending.start_event.elapsed_time(pending.end_event)
+            self.metrics.demote_copy_time_ms += copy_ms
+            self.metrics.demote_wait_time_ms += wait_ms
+            self.metrics.demote_hidden_time_ms += max(0.0, copy_ms - wait_ms)
+            self.metrics.demote_time_ms += copy_ms
+
+            node = pending.node
+            can_complete = (
+                not force_cancel
+                and node.tier == PENDING_CPU_TIER
+                and node.pages == pending.gpu_pages
+                and node.ref_count == 0
+            )
+            if can_complete:
+                node.pages = pending.cpu_pages
+                node.tier = CPU_TIER
+                node.last_access = time.monotonic()
+                self.pool.free(pending.gpu_pages)
+                self.metrics.total_demoted_pages += len(pending.gpu_pages)
+                self.metrics.async_demote_completed_pages += len(pending.gpu_pages)
+                freed_gpu_pages += len(pending.gpu_pages)
+            else:
+                if node.tier == PENDING_CPU_TIER and node.pages == pending.gpu_pages:
+                    node.tier = GPU_TIER
+                self.cpu_pool.free(pending.cpu_pages)
+                self.metrics.async_demote_cancelled_pages += len(pending.gpu_pages)
+            processed += 1
+
+        self._pending_demotions = remaining
+        return freed_gpu_pages
+
+    def _drain_pending_promotions(
+        self,
+        *,
+        wait: bool,
+        max_items: int | None = None,
+    ) -> int:
+        if not self._pending_promotions:
+            return 0
+
+        freed_cpu_pages = 0
+        remaining: list[_PendingPromotion] = []
+        processed = 0
+        for pending in self._pending_promotions:
+            if max_items is not None and processed >= max_items:
+                remaining.append(pending)
+                continue
+
+            was_ready = pending.end_event.query()
+            wait_ms = 0.0
+            if not was_ready:
+                if not wait:
+                    remaining.append(pending)
+                    continue
+                wait_start = time.perf_counter()
+                pending.end_event.synchronize()
+                wait_ms = (time.perf_counter() - wait_start) * 1000
+
+            copy_ms = pending.start_event.elapsed_time(pending.end_event)
+            self.cpu_pool.free(pending.cpu_pages)
+            self.metrics.promote_copy_time_ms += copy_ms
+            self.metrics.promote_wait_time_ms += wait_ms
+            self.metrics.promote_hidden_time_ms += max(0.0, copy_ms - wait_ms)
+            self.metrics.promote_time_ms += copy_ms
+            self.metrics.async_promote_completed_pages += len(pending.cpu_pages)
+            freed_cpu_pages += len(pending.cpu_pages)
+            processed += 1
+
+        self._pending_promotions = remaining
+        return freed_cpu_pages
+
     # -- Promotion ---------------------------------------------------
 
     def _promote_node(self, node: HiRadixNode) -> None:
@@ -546,23 +793,62 @@ class HiRadixCache:
         try:
             cpu_pages = list(node.pages)
             start = time.perf_counter()
+            if self.copy_stream is not None:
+                self._drain_pending_promotions(wait=False)
             gpu_pages = self.pool.allocate(len(cpu_pages))
 
-            try:
-                self._copy_cpu_to_gpu(cpu_pages, gpu_pages)
-            except Exception:
-                self.pool.free(gpu_pages)
-                raise
+            if self.copy_stream is not None:
+                try:
+                    self._schedule_cpu_to_gpu(cpu_pages, gpu_pages)
+                except Exception:
+                    self.pool.free(gpu_pages)
+                    raise
+            else:
+                try:
+                    self._copy_cpu_to_gpu(cpu_pages, gpu_pages)
+                except Exception:
+                    self.pool.free(gpu_pages)
+                    raise
+                self.cpu_pool.free(cpu_pages)
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                self.metrics.promote_time_ms += elapsed_ms
+                self.metrics.promote_copy_time_ms += elapsed_ms
 
-            self.cpu_pool.free(cpu_pages)
             node.pages = gpu_pages
             node.tier = GPU_TIER
             node.last_access = time.monotonic()
 
             self.metrics.total_promoted_pages += len(gpu_pages)
-            self.metrics.promote_time_ms += (time.perf_counter() - start) * 1000
         finally:
             self.dec_lock_ref(node)
+
+    def _schedule_cpu_to_gpu(
+        self,
+        cpu_pages: list[int],
+        gpu_pages: list[int],
+    ) -> None:
+        assert self.copy_stream is not None
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        with torch.cuda.stream(self.copy_stream):
+            start_event.record()
+            self.cpu_pool.copy_cpu_to_gpu(
+                self.pool,
+                cpu_pages,
+                gpu_pages,
+                non_blocking=True,
+            )
+            end_event.record()
+        torch.cuda.current_stream().wait_event(end_event)
+        self._pending_promotions.append(
+            _PendingPromotion(
+                cpu_pages=cpu_pages,
+                start_event=start_event,
+                end_event=end_event,
+                submitted_at=time.perf_counter(),
+            )
+        )
+        self.metrics.async_promote_submitted_pages += len(cpu_pages)
 
     # -- Copy dispatch -----------------------------------------------
 
@@ -600,6 +886,10 @@ class HiRadixCache:
 
     def reset(self) -> None:
         """Drop the full hierarchy and return pages to both pools."""
+        if self.copy_stream is not None:
+            self._drain_pending_promotions(wait=True)
+            self._drain_pending_demotions(wait=True, force_cancel=True)
+
         gpu_pages: list[int] = []
         cpu_pages: list[int] = []
         stack = [self.root]

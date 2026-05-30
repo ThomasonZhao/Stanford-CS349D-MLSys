@@ -92,6 +92,8 @@ async def cache_stats():
     for name in (
         "num_gpu_cached_pages",
         "num_cpu_cached_pages",
+        "pending_demote_pages",
+        "pending_promote_pages",
     ):
         data[name] = getattr(cache, name, 0)
     for name in (
@@ -102,6 +104,19 @@ async def cache_stats():
         "total_cpu_hit_tokens",
         "promote_time_ms",
         "demote_time_ms",
+        "promote_copy_time_ms",
+        "promote_wait_time_ms",
+        "promote_hidden_time_ms",
+        "promote_hidden_ratio",
+        "demote_copy_time_ms",
+        "demote_wait_time_ms",
+        "demote_hidden_time_ms",
+        "demote_hidden_ratio",
+        "async_demote_submitted_pages",
+        "async_demote_completed_pages",
+        "async_demote_cancelled_pages",
+        "async_promote_submitted_pages",
+        "async_promote_completed_pages",
     ):
         data[name] = getattr(m, name, 0)
     cpu_pool = getattr(cache, "cpu_pool", None)
