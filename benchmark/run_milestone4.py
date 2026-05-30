@@ -88,6 +88,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--concurrency", type=int, default=16)
     p.add_argument("--max-tokens", type=int, default=32)
     p.add_argument(
+        "--multiturn-schedule",
+        choices=["session", "round_robin"],
+        default="round_robin",
+        help="Forwarded to bench_cache. round_robin creates longer cache "
+        "reuse distance and is the recommended HiCache benchmark.",
+    )
+    p.add_argument(
         "--question-len",
         type=int,
         default=0,
@@ -232,6 +239,7 @@ def bench_cache_multiturn_cmd(
     turns_per_session: int | None = None,
     concurrency: int | None = None,
     max_tokens: int | None = None,
+    schedule: str | None = None,
 ) -> list[str]:
     return [
         sys.executable,
@@ -253,6 +261,8 @@ def bench_cache_multiturn_cmd(
         str(concurrency if concurrency is not None else args.concurrency),
         "--max-tokens",
         str(max_tokens if max_tokens is not None else args.max_tokens),
+        "--multiturn-schedule",
+        schedule if schedule is not None else args.multiturn_schedule,
     ]
 
 
@@ -325,6 +335,7 @@ def experiments(args: argparse.Namespace) -> list[Experiment]:
                         turns_per_session=2,
                         concurrency=1,
                         max_tokens=4,
+                        schedule="session",
                     ),
                 )
             ],
@@ -342,6 +353,7 @@ def experiments(args: argparse.Namespace) -> list[Experiment]:
                         turns_per_session=2,
                         concurrency=1,
                         max_tokens=4,
+                        schedule="session",
                     ),
                 )
             ],
@@ -411,6 +423,7 @@ def write_readme(run_dir: Path, args: argparse.Namespace, exps: list[Experiment]
         f"- `turns_per_session`: `{args.turns_per_session}`",
         f"- `concurrency`: `{args.concurrency}`",
         f"- `max_tokens`: `{args.max_tokens}`",
+        f"- `multiturn_schedule`: `{args.multiturn_schedule}`",
         "",
         "Each experiment directory contains:",
         "",

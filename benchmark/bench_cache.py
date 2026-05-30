@@ -18,10 +18,11 @@ Workloads
                turns of a back-and-forth conversation.  Turn k's prompt
                embeds the prior turns' user messages *and* assistant
                responses, so the cumulative prefix grows turn by turn
-               and subsequent turns hit on it.  Inspired by SGLang's
-               benchmark/hicache/bench_multiturn.py, deliberately
-               simplified — single fixed-length question per turn, no
-               session arrival rate, no synthetic dataset.
+               and subsequent turns hit on it.  The default schedule runs
+               each session to completion inside a worker.  Use
+               ``--multiturn-schedule round_robin`` to run turn 0 for all
+               sessions, then turn 1 for all sessions, etc.; that creates
+               the long reuse distance needed to stress HiCache.
 
 Usage
 -----
@@ -355,6 +356,66 @@ async def workload_multiturn(
     return samples
 
 
+async def workload_multiturn_round_robin(
+    base_url: str,
+    num_sessions: int,
+    turns_per_session: int,
+    concurrency: int,
+    max_tokens: int,
+) -> list[Sample]:
+    """Run each turn for all sessions before advancing to the next turn.
+
+    This preserves per-session conversational dependencies while maximizing
+    reuse distance between a session's turn k and turn k+1.  It is the most
+    direct way to expose the GPU-only cache capacity cliff.
+    """
+    samples: list[Sample] = []
+    rng = random.Random(42)
+    messages_by_session: list[list[dict]] = [
+        [{"role": "system", "content": session_system_prompt(sid)}]
+        for sid in range(num_sessions)
+    ]
+    user_msgs_by_turn: list[list[str]] = [
+        [
+            USER_TURNS[(rng.randrange(len(USER_TURNS)) + turn) % len(USER_TURNS)]
+            for _sid in range(num_sessions)
+        ]
+        for turn in range(turns_per_session)
+    ]
+
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=300),
+    ) as session:
+        for turn in range(turns_per_session):
+            sem = asyncio.Semaphore(concurrency)
+
+            async def run_one(sid: int) -> None:
+                async with sem:
+                    messages = messages_by_session[sid]
+                    user_msg = user_msgs_by_turn[turn][sid]
+                    messages.append({"role": "user", "content": user_msg})
+                    text, usage, t_start, t_first, t_end = await stream_chat(
+                        session, base_url, messages, max_tokens
+                    )
+                    samples.append(
+                        Sample(
+                            workload="multiturn",
+                            turn=turn,
+                            session_id=sid,
+                            prompt_tokens=usage.get("prompt_tokens", 0),
+                            cache_hit_tokens=usage.get("cache_hit_tokens", 0),
+                            completion_tokens=usage.get("completion_tokens", 0),
+                            start_time=t_start,
+                            first_token_time=t_first,
+                            end_time=t_end,
+                        )
+                    )
+                    messages.append({"role": "assistant", "content": text})
+
+            await asyncio.gather(*(run_one(sid) for sid in range(num_sessions)))
+    return samples
+
+
 # ── Reporting ──────────────────────────────────────────────────────────
 
 
@@ -490,6 +551,13 @@ def main() -> None:
     # multiturn-specific
     p.add_argument("--num-sessions", type=int, default=16)
     p.add_argument("--turns-per-session", type=int, default=5)
+    p.add_argument(
+        "--multiturn-schedule",
+        choices=["session", "round_robin"],
+        default="session",
+        help="session: each worker runs a full session; round_robin: run "
+        "turn k for all sessions before turn k+1, increasing cache distance.",
+    )
     args = p.parse_args()
 
     print(f"  Server      : {args.base_url}")
@@ -502,6 +570,7 @@ def main() -> None:
     else:  # multiturn
         print(f"  Sessions    : {args.num_sessions}")
         print(f"  Turns       : {args.turns_per_session}")
+        print(f"  Schedule    : {args.multiturn_schedule}")
     print(f"  Concurrency : {args.concurrency}")
     print(f"  Max tokens  : {args.max_tokens}")
 
@@ -524,15 +593,26 @@ def main() -> None:
         )
     else:  # multiturn
         report._group_labels = {}  # type: ignore[attr-defined]
-        samples = asyncio.run(
-            workload_multiturn(
-                args.base_url,
-                args.num_sessions,
-                args.turns_per_session,
-                args.concurrency,
-                args.max_tokens,
+        if args.multiturn_schedule == "round_robin":
+            samples = asyncio.run(
+                workload_multiturn_round_robin(
+                    args.base_url,
+                    args.num_sessions,
+                    args.turns_per_session,
+                    args.concurrency,
+                    args.max_tokens,
+                )
             )
-        )
+        else:
+            samples = asyncio.run(
+                workload_multiturn(
+                    args.base_url,
+                    args.num_sessions,
+                    args.turns_per_session,
+                    args.concurrency,
+                    args.max_tokens,
+                )
+            )
     wall_time = time.perf_counter() - t0
     report(samples, args.workload, wall_time)
 
