@@ -1,0 +1,33 @@
+$ /home/ubuntu/Stanford-CS349D-MLSys/.venv/bin/python -m benchmark.bench_cache --base-url http://127.0.0.1:8000 --workload multiturn --num-sessions 32 --turns-per-session 8 --concurrency 16 --max-tokens 16 --multiturn-schedule round_robin
+
+  Server      : http://127.0.0.1:8000
+  Workload    : multiturn
+  Sessions    : 32
+  Turns       : 8
+  Schedule    : round_robin
+  Concurrency : 16
+  Max tokens  : 16
+
+================================================================
+  Workload          : multiturn
+  Requests          : 256
+  Wall time         : 27.76 s
+  Throughput        :   9.22 req/s
+  Gen tok/s         :    146
+  TTFT p50 / p99    :   532 ms /  1133 ms
+  Latency p50 / p99 :  1696 ms /  2343 ms
+  Prompt tokens     : 65995
+  Cache-hit tokens  : 50176
+  Cache hit rate    : 76.0%
+================================================================
+
+  Per-turn breakdown:
+    turn   N   prompt_tok    hit_tok   hit_rate   TTFT_p50
+       0   32        4596          0      0.0%      766 ms
+       1   32        5637       4096     72.7%      382 ms
+       2   32        6688       5120     76.6%      388 ms
+       3   32        7745       6144     79.3%      493 ms
+       4   32        8783       7168     81.6%      532 ms
+       5   32        9801       8192     83.6%      554 ms
+       6   32       10851       9216     84.9%      564 ms
+       7   32       11894      10240     86.1%      586 ms
