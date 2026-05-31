@@ -61,13 +61,13 @@ the model over the entire prefix again.
 The starting point was the Milestone 3 engine. The relevant baseline features
 are:
 
-| Feature | Baseline behavior |
-|---|---|
-| Paged KV pool | KV memory is divided into fixed-size GPU pages. Each page stores K/V tensors for a fixed number of tokens. |
-| PagedAttention | Request page tables map logical prompt positions to physical GPU KV pages. |
-| Chunked prefill | Long prompts can be prefetched in chunks instead of monopolizing the scheduler. |
-| Continuous batching | Prefill and decode requests are scheduled together across active requests. |
-| Request retraction | Requests can be temporarily retracted when memory pressure requires their pages. |
+| Feature                | Baseline behavior                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Paged KV pool          | KV memory is divided into fixed-size GPU pages. Each page stores K/V tensors for a fixed number of tokens.                     |
+| PagedAttention         | Request page tables map logical prompt positions to physical GPU KV pages.                                                     |
+| Chunked prefill        | Long prompts can be prefetched in chunks instead of monopolizing the scheduler.                                                |
+| Continuous batching    | Prefill and decode requests are scheduled together across active requests.                                                     |
+| Request retraction     | Requests can be temporarily retracted when memory pressure requires their pages.                                               |
 | GPU radix prefix cache | Completed prompt pages are stored in a radix tree so future requests with shared prefixes can skip prefill for matched tokens. |
 
 The GPU-only radix cache stores page IDs from the GPU KV pool in radix nodes.
@@ -83,37 +83,37 @@ the cache configuration.
 
 ### 3.1 Hardware and Model
 
-| Item | Value |
-|---|---|
-| GPU | NVIDIA L4 |
-| Reported GPU memory | 23034 MiB |
-| Model | Qwen/Qwen3-8B |
-| Model parameters | 8190M |
-| Model dtype | bfloat16 |
-| Attention backend | FlashInfer paged attention |
-| Transformer layers | 36 |
-| Hidden size | 4096 |
-| Attention heads | 32 |
-| KV heads | 8 |
-| Head dimension | 128 |
-| Vocabulary size at runtime | 151669 |
+| Item                       | Value                      |
+| -------------------------- | -------------------------- |
+| GPU                        | NVIDIA L4                  |
+| Reported GPU memory        | 23034 MiB                  |
+| Model                      | Qwen/Qwen3-8B              |
+| Model parameters           | 8190M                      |
+| Model dtype                | bfloat16                   |
+| Attention backend          | FlashInfer paged attention |
+| Transformer layers         | 36                         |
+| Hidden size                | 4096                       |
+| Attention heads            | 32                         |
+| KV heads                   | 8                          |
+| Head dimension             | 128                        |
+| Vocabulary size at runtime | 151669                     |
 
 ### 3.2 Engine Configuration
 
-| Parameter | Value |
-|---|---|
-| Serving mode | paged |
-| Page size | 32 tokens |
-| Prefill chunk size | 512 tokens |
-| Maximum running requests | 16 |
-| GPU static memory fraction | 0.75 |
-| Static memory budget | 17.7 GB |
-| Weights and non-KV memory used | 16.8 GB |
-| GPU KV pool | 206 pages, 205 usable pages |
-| GPU KV pool size | 0.97 GB |
-| CPU KV pool for HiRadixCache | 2730 pages |
-| CPU KV pool size | 12.00 GiB |
-| CPU/GPU KV capacity ratio | 12.37x by bytes; 13.3x by page count |
+| Parameter                      | Value                                |
+| ------------------------------ | ------------------------------------ |
+| Serving mode                   | paged                                |
+| Page size                      | 32 tokens                            |
+| Prefill chunk size             | 512 tokens                           |
+| Maximum running requests       | 16                                   |
+| GPU static memory fraction     | 0.75                                 |
+| Static memory budget           | 17.7 GB                              |
+| Weights and non-KV memory used | 16.8 GB                              |
+| GPU KV pool                    | 206 pages, 205 usable pages          |
+| GPU KV pool size               | 0.97 GB                              |
+| CPU KV pool for HiRadixCache   | 2730 pages                           |
+| CPU KV pool size               | 12.00 GiB                            |
+| CPU/GPU KV capacity ratio      | 12.37x by bytes; 13.3x by page count |
 
 The CPU tier therefore satisfies the milestone requirement that HiCache be
 tested with a CPU cache at least 10x larger than the GPU KV pool.
@@ -123,15 +123,15 @@ tested with a CPU cache at least 10x larger than the GPU KV pool.
 The benchmark uses the multi-turn cache workload because it directly stresses
 prefix reuse over long reuse distances.
 
-| Workload parameter | Value |
-|---|---|
-| Workload type | multi-turn chat |
-| Sessions | 32 |
-| Turns per session | 8 |
-| Total requests | 256 |
-| Client concurrency | 16 |
-| Maximum generated tokens per request | 16 |
-| Scheduling pattern | round robin by turn |
+| Workload parameter                   | Value               |
+| ------------------------------------ | ------------------- |
+| Workload type                        | multi-turn chat     |
+| Sessions                             | 32                  |
+| Turns per session                    | 8                   |
+| Total requests                       | 256                 |
+| Client concurrency                   | 16                  |
+| Maximum generated tokens per request | 16                  |
+| Scheduling pattern                   | round robin by turn |
 
 The round-robin schedule runs turn 0 for all 32 sessions, then turn 1 for all
 32 sessions, and so on. This preserves the true conversational dependency
@@ -230,10 +230,10 @@ python -m benchmark.bench_accuracy \
 
 HiRadixCache extends the radix prefix cache with two storage tiers:
 
-| Tier | Storage | Purpose |
-|---|---|---|
-| GPU tier | Existing GPU KV page pool | Fast path for prefixes immediately usable by PagedAttention. |
-| CPU tier | Preallocated pinned host KV page pool | Larger backing cache for prefixes evicted from GPU memory. |
+| Tier     | Storage                               | Purpose                                                      |
+| -------- | ------------------------------------- | ------------------------------------------------------------ |
+| GPU tier | Existing GPU KV page pool             | Fast path for prefixes immediately usable by PagedAttention. |
+| CPU tier | Preallocated pinned host KV page pool | Larger backing cache for prefixes evicted from GPU memory.   |
 
 Each radix node has an explicit tier. A GPU node owns GPU page IDs. A CPU node
 owns CPU page IDs. A third transient state, pending-CPU, is used during async
@@ -408,26 +408,26 @@ the async events completed without forcing synchronous waiting.
 
 The final implementation consists of the following logical pieces:
 
-| Component | Responsibility |
-|---|---|
-| Tier-aware radix node | Stores key span, child edges, lock reference count, LRU state, page IDs, and storage tier. |
-| CPU KV memory pool | Owns pinned host K/V page tensors, a CPU free list, and CPU page allocation/free operations. |
-| HiRadixCache lookup | Traverses the radix tree, promotes CPU-resident matches, and returns only GPU page IDs. |
+| Component              | Responsibility                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------ |
+| Tier-aware radix node  | Stores key span, child edges, lock reference count, LRU state, page IDs, and storage tier.       |
+| CPU KV memory pool     | Owns pinned host K/V page tensors, a CPU free list, and CPU page allocation/free operations.     |
+| HiRadixCache lookup    | Traverses the radix tree, promotes CPU-resident matches, and returns only GPU page IDs.          |
 | HiRadixCache insertion | Inserts newly computed GPU pages into the radix tree while preserving radix splitting semantics. |
-| GPU demotion path | Replaces GPU eviction with D2H demotion when the CPU tier has room. |
-| CPU eviction path | Drops unlocked LRU CPU nodes when the CPU pool is full. |
-| Lock integration | Keeps the existing lock-reference API so active prefixes are protected. |
-| Async copy path | Uses a dedicated CUDA stream and events for overlap-mode demotion and promotion. |
-| Runtime flags | `--cpu-cache-size-gb` enables the CPU tier; `--hicache-overlap` enables async copies. |
-| Runtime counters | Cache-hit, demotion, promotion, CPU eviction, and overlap counters are exported after each run. |
+| GPU demotion path      | Replaces GPU eviction with D2H demotion when the CPU tier has room.                              |
+| CPU eviction path      | Drops unlocked LRU CPU nodes when the CPU pool is full.                                          |
+| Lock integration       | Keeps the existing lock-reference API so active prefixes are protected.                          |
+| Async copy path        | Uses a dedicated CUDA stream and events for overlap-mode demotion and promotion.                 |
+| Runtime flags          | `--cpu-cache-size-gb` enables the CPU tier; `--hicache-overlap` enables async copies.            |
+| Runtime counters       | Cache-hit, demotion, promotion, CPU eviction, and overlap counters are exported after each run.  |
 
 Two CLI flags control the feature:
 
-| Flag | Meaning |
-|---|---|
-| `--cpu-cache-size-gb 0` | Disable HiRadixCache and run the Milestone 3 GPU-only radix cache. |
-| `--cpu-cache-size-gb N` | Enable HiRadixCache with an N GiB pinned CPU KV tier. |
-| `--hicache-overlap` | Use the dedicated CUDA copy stream and event-based async copy path. |
+| Flag                    | Meaning                                                             |
+| ----------------------- | ------------------------------------------------------------------- |
+| `--cpu-cache-size-gb 0` | Disable HiRadixCache and run the Milestone 3 GPU-only radix cache.  |
+| `--cpu-cache-size-gb N` | Enable HiRadixCache with an N GiB pinned CPU KV tier.               |
+| `--hicache-overlap`     | Use the dedicated CUDA copy stream and event-based async copy path. |
 
 The benchmark harness was extended with a round-robin multi-turn schedule.
 This was necessary to create the reuse distance described in the milestone:
@@ -438,11 +438,11 @@ arrives only after many other sessions have consumed cache capacity.
 
 Three configurations were evaluated:
 
-| Name | CPU tier | Async overlap | Purpose |
-|---|---:|---:|---|
-| GPU-only baseline | Disabled | No | Milestone 3 default comparison. |
-| HiRadixCache blocking | 12.00 GiB | No | Full-credit HiCache behavior without overlap. |
-| HiRadixCache overlap | 12.00 GiB | Yes | Bonus overlap and end-to-end win run. |
+| Name                  |  CPU tier | Async overlap | Purpose                                       |
+| --------------------- | --------: | ------------: | --------------------------------------------- |
+| GPU-only baseline     |  Disabled |            No | Milestone 3 default comparison.               |
+| HiRadixCache blocking | 12.00 GiB |            No | Full-credit HiCache behavior without overlap. |
+| HiRadixCache overlap  | 12.00 GiB |           Yes | Bonus overlap and end-to-end win run.         |
 
 All three runs completed 256 requests on the same workload. Each request
 generated up to 16 tokens, so each run generated 4096 completion tokens in
@@ -456,15 +456,15 @@ once prior turns exist, then collapses as the multi-turn working set exceeds
 the 0.97 GB GPU KV pool.
 
 | Turn | Requests | Prompt tokens | Cache-hit tokens | Hit rate | TTFT p50 |
-|---:|---:|---:|---:|---:|---:|
-| 0 | 32 | 4596 | 0 | 0.0% | 769 ms |
-| 1 | 32 | 5637 | 4096 | 72.7% | 385 ms |
-| 2 | 32 | 6688 | 5024 | 75.1% | 388 ms |
-| 3 | 32 | 7745 | 3648 | 47.1% | 554 ms |
-| 4 | 32 | 8783 | 3328 | 37.9% | 888 ms |
-| 5 | 32 | 9801 | 1856 | 18.9% | 1297 ms |
-| 6 | 32 | 10851 | 1056 | 9.7% | 1547 ms |
-| 7 | 32 | 11892 | 544 | 4.6% | 1918 ms |
+| ---: | -------: | ------------: | ---------------: | -------: | -------: |
+|    0 |       32 |          4596 |                0 |     0.0% |   769 ms |
+|    1 |       32 |          5637 |             4096 |    72.7% |   385 ms |
+|    2 |       32 |          6688 |             5024 |    75.1% |   388 ms |
+|    3 |       32 |          7745 |             3648 |    47.1% |   554 ms |
+|    4 |       32 |          8783 |             3328 |    37.9% |   888 ms |
+|    5 |       32 |          9801 |             1856 |    18.9% |  1297 ms |
+|    6 |       32 |         10851 |             1056 |     9.7% |  1547 ms |
+|    7 |       32 |         11892 |              544 |     4.6% |  1918 ms |
 
 This satisfies the cliff criterion: the GPU-only hit rate is at least 70% on
 an early turn and below 20% by the end. Specifically, it is 72.7% on turn 1
@@ -477,15 +477,15 @@ least 10x larger than the GPU KV pool and show that the hit rate stays high.
 The table below compares the GPU-only baseline to blocking HiRadixCache.
 
 | Turn | GPU-only hit rate | HiRadixCache hit rate | GPU-only TTFT p50 | HiRadixCache TTFT p50 |
-|---:|---:|---:|---:|---:|
-| 0 | 0.0% | 0.0% | 769 ms | 820 ms |
-| 1 | 72.7% | 72.7% | 385 ms | 395 ms |
-| 2 | 75.1% | 76.6% | 388 ms | 405 ms |
-| 3 | 47.1% | 79.3% | 554 ms | 645 ms |
-| 4 | 37.9% | 81.6% | 888 ms | 723 ms |
-| 5 | 18.9% | 83.6% | 1297 ms | 778 ms |
-| 6 | 9.7% | 84.9% | 1547 ms | 783 ms |
-| 7 | 4.6% | 86.1% | 1918 ms | 868 ms |
+| ---: | ----------------: | --------------------: | ----------------: | --------------------: |
+|    0 |              0.0% |                  0.0% |            769 ms |                820 ms |
+|    1 |             72.7% |                 72.7% |            385 ms |                395 ms |
+|    2 |             75.1% |                 76.6% |            388 ms |                405 ms |
+|    3 |             47.1% |                 79.3% |            554 ms |                645 ms |
+|    4 |             37.9% |                 81.6% |            888 ms |                723 ms |
+|    5 |             18.9% |                 83.6% |           1297 ms |                778 ms |
+|    6 |              9.7% |                 84.9% |           1547 ms |                783 ms |
+|    7 |              4.6% |                 86.1% |           1918 ms |                868 ms |
 
 The behavior changes exactly as intended. The GPU-only cache falls from 72.7%
 to 4.6%, while HiRadixCache rises from 72.7% to 86.1% as conversations get
@@ -494,15 +494,15 @@ longer and more shared prefix becomes available.
 The full per-turn table for blocking HiRadixCache is:
 
 | Turn | Requests | Prompt tokens | Cache-hit tokens | Hit rate | TTFT p50 |
-|---:|---:|---:|---:|---:|---:|
-| 0 | 32 | 4596 | 0 | 0.0% | 820 ms |
-| 1 | 32 | 5637 | 4096 | 72.7% | 395 ms |
-| 2 | 32 | 6688 | 5120 | 76.6% | 405 ms |
-| 3 | 32 | 7745 | 6144 | 79.3% | 645 ms |
-| 4 | 32 | 8783 | 7168 | 81.6% | 723 ms |
-| 5 | 32 | 9801 | 8192 | 83.6% | 778 ms |
-| 6 | 32 | 10851 | 9216 | 84.9% | 783 ms |
-| 7 | 32 | 11894 | 10240 | 86.1% | 868 ms |
+| ---: | -------: | ------------: | ---------------: | -------: | -------: |
+|    0 |       32 |          4596 |                0 |     0.0% |   820 ms |
+|    1 |       32 |          5637 |             4096 |    72.7% |   395 ms |
+|    2 |       32 |          6688 |             5120 |    76.6% |   405 ms |
+|    3 |       32 |          7745 |             6144 |    79.3% |   645 ms |
+|    4 |       32 |          8783 |             7168 |    81.6% |   723 ms |
+|    5 |       32 |          9801 |             8192 |    83.6% |   778 ms |
+|    6 |       32 |         10851 |             9216 |    84.9% |   783 ms |
+|    7 |       32 |         11894 |            10240 |    86.1% |   868 ms |
 
 ### 6.3 End-to-End Performance
 
@@ -510,31 +510,31 @@ The milestone says throughput and TTFT should be reported for Track 1, even
 though full credit does not require them to improve. The table below reports
 all three final configurations.
 
-| Metric | GPU-only baseline | HiRadixCache blocking | HiRadixCache overlap |
-|---|---:|---:|---:|
-| Requests completed | 256 | 256 | 256 |
-| Wall time | 35.28 s | 30.34 s | 28.22 s |
-| Request throughput | 7.26 req/s | 8.44 req/s | 9.07 req/s |
-| Generated-token throughput | 115 tok/s | 134 tok/s | 144 tok/s |
-| TTFT p50 | 827 ms | 723 ms | 539 ms |
-| TTFT p99 | 2001 ms | 1649 ms | 1457 ms |
-| Latency p50 | 2029 ms | 1879 ms | 1698 ms |
-| Latency p99 | 3142 ms | 2875 ms | 2675 ms |
-| Prompt tokens | 65993 | 65995 | 65995 |
-| Cache-hit tokens | 19552 | 50176 | 50176 |
-| Overall cache hit rate | 29.6% | 76.0% | 76.0% |
+| Metric                     | GPU-only baseline | HiRadixCache blocking | HiRadixCache overlap |
+| -------------------------- | ----------------: | --------------------: | -------------------: |
+| Requests completed         |               256 |                   256 |                  256 |
+| Wall time                  |           35.28 s |               30.34 s |              28.22 s |
+| Request throughput         |        7.26 req/s |            8.44 req/s |           9.07 req/s |
+| Generated-token throughput |         115 tok/s |             134 tok/s |            144 tok/s |
+| TTFT p50                   |            827 ms |                723 ms |               539 ms |
+| TTFT p99                   |           2001 ms |               1649 ms |              1457 ms |
+| Latency p50                |           2029 ms |               1879 ms |              1698 ms |
+| Latency p99                |           3142 ms |               2875 ms |              2675 ms |
+| Prompt tokens              |             65993 |                 65995 |                65995 |
+| Cache-hit tokens           |             19552 |                 50176 |                50176 |
+| Overall cache hit rate     |             29.6% |                 76.0% |                76.0% |
 
 Relative to the GPU-only baseline:
 
-| Metric | HiRadixCache blocking | HiRadixCache overlap |
-|---|---:|---:|
-| Request throughput | +16.3% | +24.9% |
-| Generated-token throughput | +16.5% | +25.2% |
-| Wall time | -14.0% | -20.0% |
-| TTFT p50 | -12.6% | -34.8% |
-| TTFT p99 | -17.6% | -27.2% |
-| Latency p50 | -7.4% | -16.3% |
-| Latency p99 | -8.5% | -14.9% |
+| Metric                     | HiRadixCache blocking | HiRadixCache overlap |
+| -------------------------- | --------------------: | -------------------: |
+| Request throughput         |                +16.3% |               +24.9% |
+| Generated-token throughput |                +16.5% |               +25.2% |
+| Wall time                  |                -14.0% |               -20.0% |
+| TTFT p50                   |                -12.6% |               -34.8% |
+| TTFT p99                   |                -17.6% |               -27.2% |
+| Latency p50                |                 -7.4% |               -16.3% |
+| Latency p99                |                 -8.5% |               -14.9% |
 
 The overlap configuration satisfies the milestone bonus target of a real
 end-to-end win: it improves request throughput by more than 20%, generated-token
@@ -545,21 +545,21 @@ multi-turn configuration.
 
 The cache counters explain why the end-to-end behavior changes.
 
-| Counter | GPU-only baseline | HiRadixCache blocking | HiRadixCache overlap |
-|---|---:|---:|---:|
-| Total lookups | 256 | 256 | 256 |
-| Total query tokens | 65993 | 65995 | 65995 |
-| Total hit tokens | 19552 | 50176 | 50176 |
-| Hit rate | 29.6% | 76.0% | 76.0% |
-| Total inserted pages | 1472 | 515 | 515 |
-| GPU pages dropped by cache eviction | 1281 | 0 | 0 |
-| Pages demoted GPU to CPU | 0 | 1592 | 1647 |
-| Pages promoted CPU to GPU | 0 | 1267 | 1304 |
-| GPU-tier hit tokens | 19552 | 9632 | 8448 |
-| CPU-hit tokens | 0 | 40544 | 41728 |
-| CPU pages cached at end | 0 | 325 | 343 |
-| GPU pages cached at end | 191 | 190 | 172 |
-| CPU pages evicted | 0 | 0 | 0 |
+| Counter                             | GPU-only baseline | HiRadixCache blocking | HiRadixCache overlap |
+| ----------------------------------- | ----------------: | --------------------: | -------------------: |
+| Total lookups                       |               256 |                   256 |                  256 |
+| Total query tokens                  |             65993 |                 65995 |                65995 |
+| Total hit tokens                    |             19552 |                 50176 |                50176 |
+| Hit rate                            |             29.6% |                 76.0% |                76.0% |
+| Total inserted pages                |              1472 |                   515 |                  515 |
+| GPU pages dropped by cache eviction |              1281 |                     0 |                    0 |
+| Pages demoted GPU to CPU            |                 0 |                  1592 |                 1647 |
+| Pages promoted CPU to GPU           |                 0 |                  1267 |                 1304 |
+| GPU-tier hit tokens                 |             19552 |                  9632 |                 8448 |
+| CPU-hit tokens                      |                 0 |                 40544 |                41728 |
+| CPU pages cached at end             |                 0 |                   325 |                  343 |
+| GPU pages cached at end             |               191 |                   190 |                  172 |
+| CPU pages evicted                   |                 0 |                     0 |                    0 |
 
 In the GPU-only baseline, 1281 pages are dropped from the radix cache. Those
 pages represent prefixes that cannot be reused by later turns. In HiRadixCache,
@@ -578,23 +578,23 @@ prefixes that would have been absent in the GPU-only cache.
 The bonus requires evidence that overlap is real. The final overlap run records
 the following copy counters:
 
-| Counter | Value |
-|---|---:|
-| Async demote pages submitted | 1647 |
-| Async demote pages completed | 1647 |
-| Async demote pages cancelled | 0 |
-| Async promote pages submitted | 1304 |
-| Async promote pages completed | 1304 |
-| Pending demote pages at end | 0 |
-| Pending promote pages at end | 0 |
-| D2H demote copy time | 1061.899 ms |
-| D2H demote host wait time | 0.0058 ms |
-| D2H demote hidden time | 1061.893 ms |
-| D2H demote hidden ratio | 99.999% |
-| H2D promote copy time | 828.536 ms |
-| H2D promote host wait time | 0.000 ms |
-| H2D promote hidden time | 828.536 ms |
-| H2D promote hidden ratio | 100.000% |
+| Counter                       |       Value |
+| ----------------------------- | ----------: |
+| Async demote pages submitted  |        1647 |
+| Async demote pages completed  |        1647 |
+| Async demote pages cancelled  |           0 |
+| Async promote pages submitted |        1304 |
+| Async promote pages completed |        1304 |
+| Pending demote pages at end   |           0 |
+| Pending promote pages at end  |           0 |
+| D2H demote copy time          | 1061.899 ms |
+| D2H demote host wait time     |   0.0058 ms |
+| D2H demote hidden time        | 1061.893 ms |
+| D2H demote hidden ratio       |     99.999% |
+| H2D promote copy time         |  828.536 ms |
+| H2D promote host wait time    |    0.000 ms |
+| H2D promote hidden time       |  828.536 ms |
+| H2D promote hidden ratio      |    100.000% |
 
 The strongest evidence is the D2H demotion path. The engine submitted
 1647 demotion pages, all completed, and the host waited only 0.0058 ms across
@@ -624,11 +624,11 @@ HiRadixCache, and async-overlap HiRadixCache.
 
 All final benchmark runs completed the same 256-request workload:
 
-| Configuration | Requests completed | Completion tokens | Hangs | OOMs | Reported failures |
-|---|---:|---:|---:|---:|---:|
-| GPU-only baseline | 256/256 | 4096 | 0 | 0 | 0 |
-| HiRadixCache blocking | 256/256 | 4096 | 0 | 0 | 0 |
-| HiRadixCache overlap | 256/256 | 4096 | 0 | 0 | 0 |
+| Configuration         | Requests completed | Completion tokens | Hangs | OOMs | Reported failures |
+| --------------------- | -----------------: | ----------------: | ----: | ---: | ----------------: |
+| GPU-only baseline     |            256/256 |              4096 |     0 |    0 |                 0 |
+| HiRadixCache blocking |            256/256 |              4096 |     0 |    0 |                 0 |
+| HiRadixCache overlap  |            256/256 |              4096 |     0 |    0 |                 0 |
 
 The client received valid usage accounting for prompt tokens, completion
 tokens, and cache-hit tokens in all runs. The server finished without OOM,
@@ -641,11 +641,11 @@ KV tensors are stored between requests. To verify this at the model-output
 level, I ran a 200-sample MMLU benchmark with deterministic decoding
 (`temperature=0`, `max_tokens=32`) on the same Qwen/Qwen3-8B model.
 
-| Configuration | Samples | Correct | Accuracy | Avg latency |
-|---|---:|---:|---:|---:|
-| GPU-only baseline | 200 | 121 | 60.5% | 1.52 s |
-| HiRadixCache blocking | 200 | 121 | 60.5% | 1.54 s |
-| HiRadixCache overlap | 200 | 122 | 61.0% | 1.55 s |
+| Configuration         | Samples | Correct | Accuracy | Avg latency |
+| --------------------- | ------: | ------: | -------: | ----------: |
+| GPU-only baseline     |     200 |     121 |    60.5% |      1.52 s |
+| HiRadixCache blocking |     200 |     121 |    60.5% |      1.54 s |
+| HiRadixCache overlap  |     200 |     122 |    61.0% |      1.55 s |
 
 The blocking HiRadixCache score is identical to the GPU-only baseline. The
 overlap score differs by +0.5 percentage points, which is within the noise of a
@@ -663,15 +663,15 @@ OOMs, or pending async copy pages at the end.
 The following properties were checked through implementation invariants and
 runtime counters:
 
-| Property | Evidence |
-|---|---|
-| Requests only consume GPU page IDs | CPU-resident matches are promoted before lookup returns to the scheduler. |
-| GPU pages are not reused before D2H demotion completes | Async demotion uses a pending-CPU state and frees GPU pages only after copy-end events complete. |
-| CPU pages are not reused before H2D promotion completes | CPU page free is deferred until promotion completion. |
-| Locked prefixes are protected | The lock-reference API is preserved, and locked nodes are excluded from demotion and CPU eviction. |
-| CPU tier overflow has a defined policy | Unlocked LRU CPU nodes are dropped when CPU allocation cannot be satisfied. |
-| No final pending async work | Final overlap counters show 0 pending demote pages and 0 pending promote pages. |
-| CPU tier did not overflow in final run | CPU pages evicted = 0. |
+| Property                                                | Evidence                                                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Requests only consume GPU page IDs                      | CPU-resident matches are promoted before lookup returns to the scheduler.                          |
+| GPU pages are not reused before D2H demotion completes  | Async demotion uses a pending-CPU state and frees GPU pages only after copy-end events complete.   |
+| CPU pages are not reused before H2D promotion completes | CPU page free is deferred until promotion completion.                                              |
+| Locked prefixes are protected                           | The lock-reference API is preserved, and locked nodes are excluded from demotion and CPU eviction. |
+| CPU tier overflow has a defined policy                  | Unlocked LRU CPU nodes are dropped when CPU allocation cannot be satisfied.                        |
+| No final pending async work                             | Final overlap counters show 0 pending demote pages and 0 pending promote pages.                    |
+| CPU tier did not overflow in final run                  | CPU pages evicted = 0.                                                                             |
 
 ## 8. What Did Not Work Initially
 
@@ -763,24 +763,24 @@ than the GPU KV pool.
 
 ## 10. Milestone Requirement Checklist
 
-| Requirement | Result |
-|---|---|
-| Implement GPU + CPU HiCache tiers | Done. Radix nodes track GPU, CPU, or pending-CPU tier. |
-| Use a preallocated pinned CPU KV pool | Done. Final CPU pool is 12.00 GiB and 2730 pages. |
-| Demote GPU pages on GPU eviction | Done. Final blocking run demoted 1592 pages; overlap run demoted 1647 pages. |
-| Promote CPU pages on cache hit | Done. Final blocking run promoted 1267 pages; overlap run promoted 1304 pages. |
-| Evict CPU tier on overflow | Done. LRU unlocked CPU entries are dropped; final workload did not overflow CPU tier. |
-| Preserve concurrency correctness | Done. Lock references are preserved, and locked nodes are excluded from demotion and eviction. |
-| Add `--cpu-cache-size-gb` | Done. `0` disables HiRadixCache; positive values enable the CPU tier. |
-| Optional `--hicache-overlap` | Done. Enables dedicated copy stream and CUDA event tracking. |
-| Show GPU-only cliff | Done. Hit rate falls from 72.7% on turn 1 to 4.6% on turn 7. |
-| Show HiCache recovery | Done. Hit rate stays high and reaches 86.1% on turn 7. |
-| CPU tier at least 10x GPU KV pool | Done. 12.00 GiB CPU tier versus 0.97 GB GPU KV pool. |
-| End-to-end completion | Done. 256/256 requests completed in all final configurations. |
-| Correctness / accuracy no-regression | Done. MMLU scores are 60.5%, 60.5%, and 61.0% for GPU-only, blocking HiCache, and overlap HiCache. |
-| Report throughput and TTFT | Done. Tables report throughput, TTFT, and latency. |
-| Bonus: show overlap is real | Done. D2H demotion hidden ratio is 99.999%; all submitted async pages completed. |
-| Bonus: show >20% end-to-end win | Done. Overlap run improves request throughput by 24.9% and TTFT p50 by 34.8%. |
+| Requirement                           | Result                                                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Implement GPU + CPU HiCache tiers     | Done. Radix nodes track GPU, CPU, or pending-CPU tier.                                             |
+| Use a preallocated pinned CPU KV pool | Done. Final CPU pool is 12.00 GiB and 2730 pages.                                                  |
+| Demote GPU pages on GPU eviction      | Done. Final blocking run demoted 1592 pages; overlap run demoted 1647 pages.                       |
+| Promote CPU pages on cache hit        | Done. Final blocking run promoted 1267 pages; overlap run promoted 1304 pages.                     |
+| Evict CPU tier on overflow            | Done. LRU unlocked CPU entries are dropped; final workload did not overflow CPU tier.              |
+| Preserve concurrency correctness      | Done. Lock references are preserved, and locked nodes are excluded from demotion and eviction.     |
+| Add `--cpu-cache-size-gb`             | Done. `0` disables HiRadixCache; positive values enable the CPU tier.                              |
+| Optional `--hicache-overlap`          | Done. Enables dedicated copy stream and CUDA event tracking.                                       |
+| Show GPU-only cliff                   | Done. Hit rate falls from 72.7% on turn 1 to 4.6% on turn 7.                                       |
+| Show HiCache recovery                 | Done. Hit rate stays high and reaches 86.1% on turn 7.                                             |
+| CPU tier at least 10x GPU KV pool     | Done. 12.00 GiB CPU tier versus 0.97 GB GPU KV pool.                                               |
+| End-to-end completion                 | Done. 256/256 requests completed in all final configurations.                                      |
+| Correctness / accuracy no-regression  | Done. MMLU scores are 60.5%, 60.5%, and 61.0% for GPU-only, blocking HiCache, and overlap HiCache. |
+| Report throughput and TTFT            | Done. Tables report throughput, TTFT, and latency.                                                 |
+| Bonus: show overlap is real           | Done. D2H demotion hidden ratio is 99.999%; all submitted async pages completed.                   |
+| Bonus: show >20% end-to-end win       | Done. Overlap run improves request throughput by 24.9% and TTFT p50 by 34.8%.                      |
 
 ## 11. Conclusion
 
