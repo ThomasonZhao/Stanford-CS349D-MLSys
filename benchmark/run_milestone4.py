@@ -78,10 +78,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--logs-root", default="logs/milestone4")
     p.add_argument(
         "--suite",
-        choices=["smoke", "required", "overlap", "all"],
+        choices=["smoke", "required", "overlap", "accuracy", "all"],
         default="required",
         help="smoke validates plumbing; required runs GPU-only vs HiCache; "
-        "overlap adds --hicache-overlap; all runs required+overlap.",
+        "overlap adds --hicache-overlap; accuracy runs MMLU correctness; "
+        "all runs required+overlap+accuracy.",
+    )
+    p.add_argument(
+        "--num-accuracy-samples",
+        type=int,
+        default=200,
+        help="MMLU samples for HiCache correctness comparison.",
+    )
+    p.add_argument(
+        "--accuracy-concurrency",
+        type=int,
+        default=8,
+        help="Concurrency forwarded to bench_accuracy.",
+    )
+    p.add_argument(
+        "--accuracy-max-tokens",
+        type=int,
+        default=32,
+        help="Max output tokens forwarded to bench_accuracy.",
     )
     p.add_argument("--num-sessions", type=int, default=64)
     p.add_argument("--turns-per-session", type=int, default=8)
@@ -266,6 +285,24 @@ def bench_cache_multiturn_cmd(
     ]
 
 
+def bench_accuracy_mmlu_cmd(args: argparse.Namespace) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "benchmark.bench_accuracy",
+        "--base-url",
+        base_url(args),
+        "--dataset",
+        "mmlu",
+        "--num-samples",
+        str(args.num_accuracy_samples),
+        "--concurrency",
+        str(args.accuracy_concurrency),
+        "--max-tokens",
+        str(args.accuracy_max_tokens),
+    ]
+
+
 def experiments(args: argparse.Namespace) -> list[Experiment]:
     gpu_only = ["--cpu-cache-size-gb", "0"]
     hicache = ["--cpu-cache-size-gb", str(args.cpu_cache_size_gb)]
@@ -321,6 +358,36 @@ def experiments(args: argparse.Namespace) -> list[Experiment]:
         )
     ]
 
+    accuracy = [
+        Experiment(
+            name="gpu_only_mmlu_accuracy",
+            description=(
+                "Correctness baseline: MMLU accuracy with the Milestone 3 "
+                "GPU-only radix cache."
+            ),
+            server_extra=gpu_only,
+            clients=[ClientRun("bench_accuracy_mmlu", bench_accuracy_mmlu_cmd(args))],
+        ),
+        Experiment(
+            name="hicache_mmlu_accuracy",
+            description=(
+                "Correctness check: MMLU accuracy with HiCache enabled and "
+                "blocking CPU-tier copies."
+            ),
+            server_extra=hicache,
+            clients=[ClientRun("bench_accuracy_mmlu", bench_accuracy_mmlu_cmd(args))],
+        ),
+        Experiment(
+            name="hicache_overlap_mmlu_accuracy",
+            description=(
+                "Correctness check: MMLU accuracy with HiCache async overlap "
+                "enabled."
+            ),
+            server_extra=hicache_overlap,
+            clients=[ClientRun("bench_accuracy_mmlu", bench_accuracy_mmlu_cmd(args))],
+        ),
+    ]
+
     smoke = [
         Experiment(
             name="smoke_gpu_only_multiturn",
@@ -366,7 +433,9 @@ def experiments(args: argparse.Namespace) -> list[Experiment]:
         return required
     if args.suite == "overlap":
         return overlap
-    return required + overlap
+    if args.suite == "accuracy":
+        return accuracy
+    return required + overlap + accuracy
 
 
 def server_cmd_for(
@@ -424,6 +493,9 @@ def write_readme(run_dir: Path, args: argparse.Namespace, exps: list[Experiment]
         f"- `concurrency`: `{args.concurrency}`",
         f"- `max_tokens`: `{args.max_tokens}`",
         f"- `multiturn_schedule`: `{args.multiturn_schedule}`",
+        f"- MMLU accuracy samples: `{args.num_accuracy_samples}`",
+        f"- MMLU accuracy concurrency: `{args.accuracy_concurrency}`",
+        f"- MMLU accuracy max tokens: `{args.accuracy_max_tokens}`",
         "",
         "Each experiment directory contains:",
         "",
@@ -438,6 +510,8 @@ def write_readme(run_dir: Path, args: argparse.Namespace, exps: list[Experiment]
         "- GPU-only cliff: `gpu_only_multiturn_cliff`",
         "- HiCache recovery: `hicache_multiturn_recovery`",
         "- Optional overlap: `hicache_overlap_multiturn`",
+        "- MMLU correctness: `gpu_only_mmlu_accuracy`, "
+        "`hicache_mmlu_accuracy`, `hicache_overlap_mmlu_accuracy`",
         "",
         "Experiments:",
         "",
