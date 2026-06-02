@@ -1,0 +1,41 @@
+{
+  "cache_stats_before": "01_hicache_overlap_multiturn/cache_stats_before.json",
+  "clients": [
+    {
+      "cache_stats_after": "01_hicache_overlap_multiturn/cache_stats_after_bench_cache_multiturn.json",
+      "cache_stats_after_error": null,
+      "cmd": [
+        "/home/ubuntu/Stanford-CS349D-MLSys/.venv/bin/python",
+        "-m",
+        "benchmark.bench_cache",
+        "--base-url",
+        "http://127.0.0.1:8000",
+        "--workload",
+        "multiturn",
+        "--num-sessions",
+        "32",
+        "--turns-per-session",
+        "8",
+        "--concurrency",
+        "16",
+        "--max-tokens",
+        "16",
+        "--multiturn-schedule",
+        "round_robin"
+      ],
+      "log": "01_hicache_overlap_multiturn/bench_cache_multiturn.log",
+      "log_failed": false,
+      "name": "bench_cache_multiturn",
+      "returncode": 0,
+      "server_returncode": null
+    }
+  ],
+  "description": "Same HiCache workload with --hicache-overlap enabled for the optional overlap/bonus measurement.",
+  "name": "hicache_overlap_multiturn",
+  "server_extra": [
+    "--cpu-cache-size-gb",
+    "12.0",
+    "--hicache-overlap"
+  ],
+  "server_log": "01_hicache_overlap_multiturn/server.log"
+}

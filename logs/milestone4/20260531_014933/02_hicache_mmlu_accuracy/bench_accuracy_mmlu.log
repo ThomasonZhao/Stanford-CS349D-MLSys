@@ -1,0 +1,52 @@
+$ /home/ubuntu/Stanford-CS349D-MLSys/.venv/bin/python -m benchmark.bench_accuracy --base-url http://127.0.0.1:8000 --dataset mmlu --num-samples 200 --concurrency 8 --max-tokens 32
+
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+============================================================
+  Accuracy Benchmark
+  Dataset     : mmlu
+  Samples     : 200
+  Max tokens  : 32
+  Concurrency : 8
+  Server      : http://127.0.0.1:8000
+============================================================
+
+Loading dataset...
+  Loaded 200 samples
+
+Running evaluation...
+  [10/200] accuracy=60.0%  latency=2.2s
+  [20/200] accuracy=60.0%  latency=0.5s
+  [30/200] accuracy=60.0%  latency=4.1s
+  [40/200] accuracy=55.0%  latency=3.1s
+  [50/200] accuracy=56.0%  latency=0.3s
+  [60/200] accuracy=60.0%  latency=0.5s
+  [70/200] accuracy=61.4%  latency=0.3s
+  [80/200] accuracy=60.0%  latency=0.3s
+  [90/200] accuracy=57.8%  latency=0.2s
+  [100/200] accuracy=60.0%  latency=2.9s
+  [110/200] accuracy=56.4%  latency=0.4s
+  [120/200] accuracy=56.7%  latency=0.4s
+  [130/200] accuracy=57.7%  latency=0.3s
+  [140/200] accuracy=58.6%  latency=3.6s
+  [150/200] accuracy=58.0%  latency=3.3s
+  [160/200] accuracy=57.5%  latency=0.2s
+  [170/200] accuracy=59.4%  latency=1.4s
+  [180/200] accuracy=60.0%  latency=4.3s
+  [190/200] accuracy=60.5%  latency=0.2s
+  [200/200] accuracy=60.5%  latency=2.3s
+
+============================================================
+  MMLU Accuracy Report
+  Samples    : 200
+  Correct    : 121
+  Accuracy   : 60.5%
+  Avg latency: 1.54s
+============================================================
+
+  Sample incorrect predictions (5 of 79):
+    Gold=1  Pred=2  Output: C...
+    Gold=2  Pred=1  Output: B. 2...
+    Gold=0  Pred=2  Output: C. Not wrong, Wrong...
+    Gold=1  Pred=2  Output: C. left submandibular lymph node....
+    Gold=1  Pred=0  Output: A. Task culture...

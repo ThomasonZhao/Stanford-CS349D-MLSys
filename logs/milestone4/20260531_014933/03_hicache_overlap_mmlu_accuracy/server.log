@@ -1,0 +1,1121 @@
+$ /home/ubuntu/Stanford-CS349D-MLSys/.venv/bin/python -m miniengine --model Qwen/Qwen3-8B --host 127.0.0.1 --port 8000 --dtype bfloat16 --mode paged --mem-fraction-static 0.75 --page-size 32 --prefill-chunk-size 512 --max-running 16 --cpu-cache-size-gb 12.0 --hicache-overlap
+
+01:52:48 INFO     miniengine  Initializing engine  model=Qwen/Qwen3-8B  dtype=bfloat16  mode=paged
+01:52:48 INFO     miniengine.engine  Loading tokenizer from Qwen/Qwen3-8B …
+01:52:48 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+01:52:48 WARNING  huggingface_hub.utils._http  Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+01:52:48 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+01:52:48 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+01:52:48 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/tokenizer_config.json "HTTP/1.1 200 OK"
+01:52:48 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+01:52:48 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+01:52:49 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B "HTTP/1.1 200 OK"
+01:52:49 INFO     miniengine.engine  Loading model config from Qwen/Qwen3-8B …
+01:52:49 INFO     httpx  HTTP Request: HEAD https://huggingface.co/Qwen/Qwen3-8B/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+01:52:49 INFO     httpx  HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen3-8B/b968826d9c46dd6066d109eabc6255188de91218/config.json "HTTP/1.1 200 OK"
+01:52:49 INFO     miniengine.engine  Config: layers=36, hidden=4096, heads=32, kv_heads=8, head_dim=128, intermediate=12288, vocab=151936, tie_embed=False
+01:52:49 INFO     miniengine.model  Downloading / locating model files for Qwen/Qwen3-8B …
+01:52:49 INFO     httpx  HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen3-8B/revision/main "HTTP/1.1 200 OK"
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 182361.04it/s]
+01:52:49 INFO     miniengine.model  Loading 5 safetensors shard(s) …
+01:53:57 INFO     miniengine.model  Weights loaded — 8190735360 parameters on cuda (torch.bfloat16)
+01:53:57 INFO     miniengine.engine  mem-fraction-static=0.75 → static budget=17.7 GB, weights/etc used=16.8 GB → KV pool=1.0 GB
+01:53:57 INFO     miniengine.kv_memory_pool  KVMemoryPool: 206 pages × 32 tokens (0.97 GB total, 205 usable pages)
+01:54:08 INFO     miniengine.hicache  CPUKVMemoryPool: 2730 pages x 32 tokens (12.00 GiB total)
+01:54:10 INFO     miniengine.engine  flashinfer backend ready (workspace=128 MB, page_size=32)
+01:54:10 INFO     miniengine.engine  Engine ready  —  mode=paged, backend=flashinfer, compile=False, graph=False, vocab=151669, stop_ids={151643, 151645}, params=8190M
+01:54:10 INFO     miniengine.scheduler  Scheduler started
+01:54:10 INFO     miniengine  Starting server on 127.0.0.1:8000
+INFO:     Started server process [88270]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50666 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50682 - "GET /cache_stats HTTP/1.1" 200 OK
+01:54:15 INFO     miniengine.scheduler  Enqueued request 1df80cf7-ff7f-440f-972c-8e8b84220e87  (prompt_len=137, waiting=1)
+01:54:15 INFO     miniengine.scheduler  Enqueued request de6b220c-8d81-4089-8b54-249be3b776e5  (prompt_len=86, waiting=2)
+01:54:15 INFO     miniengine.scheduler  Admitting 2 new requests (8 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:15 INFO     miniengine.scheduler  Enqueued request 3288f121-5080-47cd-9227-970deb3595f9  (prompt_len=188, waiting=1)
+01:54:15 INFO     miniengine.scheduler  Enqueued request c14c3ba1-04f6-4872-904b-5c659e7374f0  (prompt_len=64, waiting=2)
+01:54:15 INFO     miniengine.scheduler  Enqueued request 73301b21-b64a-4df3-8f34-0b8a8742d5ac  (prompt_len=106, waiting=3)
+01:54:15 INFO     miniengine.scheduler  Enqueued request b4e64d2f-3400-4922-ad4c-6c4559e05bc7  (prompt_len=281, waiting=4)
+01:54:15 INFO     miniengine.scheduler  Enqueued request c3765d16-f717-4de7-a7cd-fced3d448671  (prompt_len=60, waiting=5)
+01:54:15 INFO     miniengine.scheduler  Enqueued request 7eba9f69-9868-4cce-ac2d-a6aa36c8e35f  (prompt_len=58, waiting=6)
+01:54:16 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (8 pages), still prefilling 0 requests
+01:54:16 INFO     miniengine.scheduler  Finished request de6b220c-8d81-4089-8b54-249be3b776e5  (output_len=2, running=2, waiting=6)
+01:54:16 INFO     miniengine.scheduler  Admitting 6 new requests (25 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:16 INFO     miniengine.scheduler  Enqueued request 27742190-b289-4fc8-99b9-64dd1e33798f  (prompt_len=223, waiting=1)
+01:54:16 INFO     miniengine.scheduler  Chunked prefill step: admitted 6 new requests (25 pages), still prefilling 0 requests
+01:54:16 INFO     miniengine.scheduler  Finished request c14c3ba1-04f6-4872-904b-5c659e7374f0  (output_len=2, running=7, waiting=1)
+01:54:16 INFO     miniengine.scheduler  Finished request 73301b21-b64a-4df3-8f34-0b8a8742d5ac  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:16 INFO     miniengine.scheduler  Finished request b4e64d2f-3400-4922-ad4c-6c4559e05bc7  (output_len=2, running=7, waiting=1)
+01:54:16 INFO     miniengine.scheduler  Finished request c3765d16-f717-4de7-a7cd-fced3d448671  (output_len=2, running=7, waiting=1)
+01:54:16 INFO     miniengine.scheduler  Admitting 1 new requests (7 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:16 INFO     miniengine.scheduler  Enqueued request 05b01ef2-f07f-4781-8ca4-ffc46ee0b7ab  (prompt_len=82, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:16 INFO     miniengine.scheduler  Enqueued request 82b525af-3e7a-4784-aef7-24d9cf082753  (prompt_len=126, waiting=2)
+01:54:16 INFO     miniengine.scheduler  Enqueued request 64de63ad-85c4-4681-8370-c79d818e9073  (prompt_len=81, waiting=3)
+01:54:16 INFO     miniengine.scheduler  Enqueued request 7cd2cb84-9bc8-4506-8432-3961af591416  (prompt_len=53, waiting=4)
+01:54:16 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (7 pages), still prefilling 0 requests
+01:54:16 INFO     miniengine.scheduler  Admitting 4 new requests (12 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:16 INFO     miniengine.scheduler  Chunked prefill step: admitted 4 new requests (12 pages), still prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Finished request 05b01ef2-f07f-4781-8ca4-ffc46ee0b7ab  (output_len=2, running=8, waiting=0)
+01:54:17 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Enqueued request 0e73c823-a814-440d-86ef-0ae3822e540a  (prompt_len=62, waiting=1)
+01:54:17 INFO     miniengine.scheduler  Finished request 7eba9f69-9868-4cce-ac2d-a6aa36c8e35f  (output_len=5, running=7, waiting=1)
+01:54:17 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Enqueued request f3f6bb2c-1f4a-4de5-86b9-e528eb48d34c  (prompt_len=144, waiting=1)
+01:54:17 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Finished request 64de63ad-85c4-4681-8370-c79d818e9073  (output_len=5, running=8, waiting=0)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Finished request 7cd2cb84-9bc8-4506-8432-3961af591416  (output_len=5, running=8, waiting=0)
+01:54:17 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Enqueued request 00773633-a188-4d8f-85f5-64c2fff34251  (prompt_len=394, waiting=1)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Enqueued request 6fc37f15-f368-40ae-8154-dadc61aeab63  (prompt_len=122, waiting=2)
+01:54:17 INFO     miniengine.scheduler  Admitting 2 new requests (17 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (17 pages), still prefilling 0 requests
+01:54:17 INFO     miniengine.scheduler  Finished request 82b525af-3e7a-4784-aef7-24d9cf082753  (output_len=7, running=8, waiting=0)
+01:54:17 INFO     miniengine.scheduler  Finished request 0e73c823-a814-440d-86ef-0ae3822e540a  (output_len=5, running=8, waiting=0)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Finished request f3f6bb2c-1f4a-4de5-86b9-e528eb48d34c  (output_len=4, running=8, waiting=0)
+01:54:17 INFO     miniengine.scheduler  Finished request 00773633-a188-4d8f-85f5-64c2fff34251  (output_len=2, running=8, waiting=0)
+01:54:17 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Enqueued request 6a975c8a-8bde-4f4a-a85f-e7fe6f8d3162  (prompt_len=78, waiting=1)
+01:54:17 INFO     miniengine.scheduler  Enqueued request 91569d25-e381-4130-89a6-d5f004e95cf1  (prompt_len=293, waiting=2)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:17 INFO     miniengine.scheduler  Enqueued request 6d147373-4f5d-41a7-8870-89add24fcfcd  (prompt_len=85, waiting=3)
+01:54:17 INFO     miniengine.scheduler  Enqueued request 9fe16208-f52c-41e9-a54f-32e3e49881f4  (prompt_len=59, waiting=4)
+01:54:17 INFO     miniengine.scheduler  Admitting 4 new requests (18 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Chunked prefill step: admitted 4 new requests (18 pages), still prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Finished request 6a975c8a-8bde-4f4a-a85f-e7fe6f8d3162  (output_len=2, running=8, waiting=0)
+01:54:18 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:18 INFO     miniengine.scheduler  Enqueued request 135a2c1f-82fd-42bd-a515-7d070b8feb18  (prompt_len=469, waiting=1)
+01:54:18 INFO     miniengine.scheduler  Admitting 1 new requests (15 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (15 pages), still prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Finished request 91569d25-e381-4130-89a6-d5f004e95cf1  (output_len=4, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:18 INFO     miniengine.scheduler  Finished request 135a2c1f-82fd-42bd-a515-7d070b8feb18  (output_len=2, running=8, waiting=0)
+01:54:18 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Enqueued request 3a02a458-9fb8-48ca-aa2e-a54f20d93c77  (prompt_len=109, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:18 INFO     miniengine.scheduler  Enqueued request c5c850dc-daec-433e-9903-86e5dc131ec3  (prompt_len=92, waiting=2)
+01:54:18 INFO     miniengine.scheduler  Admitting 2 new requests (7 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (7 pages), still prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Finished request c5c850dc-daec-433e-9903-86e5dc131ec3  (output_len=2, running=8, waiting=0)
+01:54:18 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:18 INFO     miniengine.scheduler  Enqueued request 27229d4c-46a0-4337-8e1e-53e988755b61  (prompt_len=93, waiting=1)
+01:54:18 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:18 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Finished request 27229d4c-46a0-4337-8e1e-53e988755b61  (output_len=6, running=8, waiting=0)
+01:54:19 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:19 INFO     miniengine.scheduler  Enqueued request 6d192d1c-0131-4b8a-9b25-ad98bf5c1a29  (prompt_len=62, waiting=1)
+01:54:19 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Finished request 6d147373-4f5d-41a7-8870-89add24fcfcd  (output_len=14, running=8, waiting=0)
+01:54:19 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:19 INFO     miniengine.scheduler  Enqueued request 6c454a76-bd06-422c-88cf-44abb55a6087  (prompt_len=83, waiting=1)
+01:54:19 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Finished request 6d192d1c-0131-4b8a-9b25-ad98bf5c1a29  (output_len=5, running=8, waiting=0)
+01:54:19 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:19 INFO     miniengine.scheduler  Enqueued request 1b1760d2-5238-4474-8b2a-cf720a76f609  (prompt_len=378, waiting=1)
+01:54:19 INFO     miniengine.scheduler  Admitting 1 new requests (12 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:19 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (12 pages), still prefilling 0 requests
+01:54:20 INFO     miniengine.scheduler  Finished request 1b1760d2-5238-4474-8b2a-cf720a76f609  (output_len=2, running=8, waiting=0)
+01:54:20 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:20 INFO     miniengine.scheduler  Enqueued request 519add0d-8589-4c04-9c43-380b280e29d4  (prompt_len=294, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Finished request 6c454a76-bd06-422c-88cf-44abb55a6087  (output_len=6, running=7, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Admitting 1 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:20 INFO     miniengine.scheduler  Enqueued request f887e36e-9e24-4553-9ad2-41390015e73a  (prompt_len=181, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (10 pages), still prefilling 0 requests
+01:54:20 INFO     miniengine.scheduler  Finished request 519add0d-8589-4c04-9c43-380b280e29d4  (output_len=2, running=7, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:20 INFO     miniengine.scheduler  Enqueued request d7378550-5e49-4339-aaf3-df71346e98c3  (prompt_len=381, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:20 INFO     miniengine.scheduler  Finished request 1df80cf7-ff7f-440f-972c-8e8b84220e87  (output_len=32, running=7, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Admitting 1 new requests (12 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:20 INFO     miniengine.scheduler  Enqueued request 9edf73bb-44aa-4c2d-9b6a-adabc0032ae5  (prompt_len=131, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (12 pages), still prefilling 0 requests
+01:54:20 INFO     miniengine.scheduler  Finished request 3288f121-5080-47cd-9227-970deb3595f9  (output_len=32, running=7, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:20 INFO     miniengine.scheduler  Enqueued request 658fad75-f3f5-4209-8bf6-b3f515a2831b  (prompt_len=150, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:20 INFO     miniengine.scheduler  Finished request 27742190-b289-4fc8-99b9-64dd1e33798f  (output_len=32, running=7, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:20 INFO     miniengine.scheduler  Enqueued request 1ea3c603-aacd-4dc9-9198-a26d5a6196d2  (prompt_len=81, waiting=1)
+01:54:20 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Finished request 658fad75-f3f5-4209-8bf6-b3f515a2831b  (output_len=2, running=7, waiting=1)
+01:54:21 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:21 INFO     miniengine.scheduler  Enqueued request 67cf6481-6943-4ef5-ab43-394f1cd07739  (prompt_len=98, waiting=1)
+01:54:21 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Finished request 1ea3c603-aacd-4dc9-9198-a26d5a6196d2  (output_len=2, running=7, waiting=1)
+01:54:21 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:21 INFO     miniengine.scheduler  Enqueued request ba2da0ba-50c9-4e38-85f4-380f486c08f6  (prompt_len=68, waiting=1)
+01:54:21 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Finished request ba2da0ba-50c9-4e38-85f4-380f486c08f6  (output_len=2, running=8, waiting=0)
+01:54:21 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:21 INFO     miniengine.scheduler  Enqueued request 9f5ae103-713c-445b-bd0f-cce4205b3f5a  (prompt_len=131, waiting=1)
+01:54:21 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Finished request 6fc37f15-f368-40ae-8154-dadc61aeab63  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:21 INFO     miniengine.scheduler  Finished request d7378550-5e49-4339-aaf3-df71346e98c3  (output_len=9, running=8, waiting=0)
+01:54:21 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Enqueued request 5433fe6b-09f8-4ed6-8b22-19f83541dc02  (prompt_len=92, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:21 INFO     miniengine.scheduler  Enqueued request 1eaf846c-bb0a-4db5-82e8-978b148bb110  (prompt_len=166, waiting=2)
+01:54:21 INFO     miniengine.scheduler  Admitting 2 new requests (9 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (9 pages), still prefilling 0 requests
+01:54:21 INFO     miniengine.scheduler  Finished request 9fe16208-f52c-41e9-a54f-32e3e49881f4  (output_len=32, running=8, waiting=0)
+01:54:21 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:21 INFO     miniengine.scheduler  Enqueued request d2dee5fa-22f4-4031-9546-91deb76beb47  (prompt_len=75, waiting=1)
+01:54:22 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Finished request 9f5ae103-713c-445b-bd0f-cce4205b3f5a  (output_len=7, running=8, waiting=0)
+01:54:22 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:22 INFO     miniengine.scheduler  Enqueued request f08ffe73-f0a6-4c02-aa32-bfd1c869d89e  (prompt_len=124, waiting=1)
+01:54:22 INFO     miniengine.scheduler  Finished request 3a02a458-9fb8-48ca-aa2e-a54f20d93c77  (output_len=32, running=7, waiting=1)
+01:54:22 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:22 INFO     miniengine.scheduler  Enqueued request b1ce07c6-ea27-4ade-aa7c-7978b1cadd63  (prompt_len=107, waiting=1)
+01:54:22 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Finished request b1ce07c6-ea27-4ade-aa7c-7978b1cadd63  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:22 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Enqueued request 41b7bd9d-8e2a-4da8-ae43-0058ce70ec20  (prompt_len=88, waiting=1)
+01:54:22 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Finished request 41b7bd9d-8e2a-4da8-ae43-0058ce70ec20  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:22 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:22 INFO     miniengine.scheduler  Enqueued request 8dded2ec-8ae2-4a23-b874-0d36a1e04cfa  (prompt_len=281, waiting=1)
+01:54:22 INFO     miniengine.scheduler  Admitting 1 new requests (9 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (9 pages), still prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Finished request 8dded2ec-8ae2-4a23-b874-0d36a1e04cfa  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Enqueued request b10314e3-d999-42bf-a6ad-ef9d04174cb8  (prompt_len=75, waiting=1)
+01:54:23 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Finished request b10314e3-d999-42bf-a6ad-ef9d04174cb8  (output_len=6, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Enqueued request 597437b3-135d-4444-b8d8-a5a9a4f72ec7  (prompt_len=119, waiting=1)
+01:54:23 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:23 INFO     miniengine.scheduler  Finished request 597437b3-135d-4444-b8d8-a5a9a4f72ec7  (output_len=2, running=8, waiting=0)
+01:54:23 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:23 INFO     miniengine.scheduler  Enqueued request c414634a-6ca0-4eea-880d-f573b2eaa646  (prompt_len=164, waiting=1)
+01:54:23 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Finished request f887e36e-9e24-4553-9ad2-41390015e73a  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Finished request c414634a-6ca0-4eea-880d-f573b2eaa646  (output_len=2, running=8, waiting=0)
+01:54:24 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Enqueued request 1a1ddf72-0275-462c-91f2-b176e4ca4626  (prompt_len=71, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Enqueued request c186d66f-30d6-49ac-8f6f-b03f39150127  (prompt_len=77, waiting=2)
+01:54:24 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Finished request 9edf73bb-44aa-4c2d-9b6a-adabc0032ae5  (output_len=32, running=8, waiting=0)
+01:54:24 INFO     miniengine.scheduler  Finished request 1a1ddf72-0275-462c-91f2-b176e4ca4626  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Enqueued request a02423b8-8fa0-4265-a8db-4a33c4d43941  (prompt_len=78, waiting=1)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Enqueued request 1eab7404-6a6b-416f-a4e5-de461cb3427a  (prompt_len=82, waiting=2)
+01:54:24 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Finished request a02423b8-8fa0-4265-a8db-4a33c4d43941  (output_len=2, running=8, waiting=0)
+01:54:24 INFO     miniengine.scheduler  Finished request 1eab7404-6a6b-416f-a4e5-de461cb3427a  (output_len=2, running=8, waiting=0)
+01:54:24 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Enqueued request d5637895-1bc9-4fa4-a788-dea224cbfd4f  (prompt_len=57, waiting=1)
+01:54:24 INFO     miniengine.scheduler  Enqueued request 2d4cf85c-dada-4f5e-a41a-7e8b231ff468  (prompt_len=131, waiting=2)
+01:54:24 INFO     miniengine.scheduler  Finished request 67cf6481-6943-4ef5-ab43-394f1cd07739  (output_len=32, running=6, waiting=2)
+01:54:24 INFO     miniengine.scheduler  Admitting 2 new requests (7 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Enqueued request ed3e7f87-2d6e-4e89-99a9-8a133e130027  (prompt_len=115, waiting=1)
+01:54:24 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (7 pages), still prefilling 0 requests
+01:54:24 INFO     miniengine.scheduler  Finished request 2d4cf85c-dada-4f5e-a41a-7e8b231ff468  (output_len=2, running=7, waiting=1)
+01:54:24 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:24 INFO     miniengine.scheduler  Enqueued request d9938128-857c-46d4-b44f-532b2146d678  (prompt_len=63, waiting=1)
+01:54:24 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Finished request c186d66f-30d6-49ac-8f6f-b03f39150127  (output_len=8, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Finished request d5637895-1bc9-4fa4-a788-dea224cbfd4f  (output_len=4, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:25 INFO     miniengine.scheduler  Enqueued request c87972a6-1021-4df3-a845-62299221f82b  (prompt_len=62, waiting=1)
+01:54:25 INFO     miniengine.scheduler  Enqueued request 131b3b83-e055-4be7-8591-cb83208d29a2  (prompt_len=68, waiting=2)
+01:54:25 INFO     miniengine.scheduler  Admitting 2 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (5 pages), still prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Finished request 5433fe6b-09f8-4ed6-8b22-19f83541dc02  (output_len=32, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Finished request 1eaf846c-bb0a-4db5-82e8-978b148bb110  (output_len=32, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Finished request c87972a6-1021-4df3-a845-62299221f82b  (output_len=2, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:25 INFO     miniengine.scheduler  Enqueued request 5883abc4-ae06-489e-9914-b451f275b561  (prompt_len=124, waiting=1)
+01:54:25 INFO     miniengine.scheduler  Enqueued request ef3d4c16-076b-4059-96b3-7a8ee81f6b05  (prompt_len=251, waiting=2)
+01:54:25 INFO     miniengine.scheduler  Enqueued request 2b75a020-a9e6-4c8f-a879-4c244c45653b  (prompt_len=106, waiting=3)
+01:54:25 INFO     miniengine.scheduler  Admitting 3 new requests (15 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (15 pages), still prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Finished request d2dee5fa-22f4-4031-9546-91deb76beb47  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:25 INFO     miniengine.scheduler  Finished request d9938128-857c-46d4-b44f-532b2146d678  (output_len=6, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Finished request ef3d4c16-076b-4059-96b3-7a8ee81f6b05  (output_len=2, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Enqueued request d77fa91f-ace0-4c25-b0f3-b27c45d57be8  (prompt_len=131, waiting=1)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:25 INFO     miniengine.scheduler  Enqueued request 71818a36-658e-4c87-8a66-ac3789ea8ba2  (prompt_len=57, waiting=2)
+01:54:25 INFO     miniengine.scheduler  Enqueued request 6a6b1241-80c5-4f8d-8aad-a05d8cac3fff  (prompt_len=73, waiting=3)
+01:54:25 INFO     miniengine.scheduler  Admitting 3 new requests (9 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (9 pages), still prefilling 0 requests
+01:54:25 INFO     miniengine.scheduler  Finished request 71818a36-658e-4c87-8a66-ac3789ea8ba2  (output_len=2, running=8, waiting=0)
+01:54:25 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:25 INFO     miniengine.scheduler  Enqueued request 85cf8884-6722-4b8a-8fab-a8899c68738e  (prompt_len=58, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Finished request f08ffe73-f0a6-4c02-aa32-bfd1c869d89e  (output_len=32, running=7, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:26 INFO     miniengine.scheduler  Enqueued request 3b6393ba-1221-44bf-9bbe-6d10fbdd22ac  (prompt_len=53, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:26 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:26 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:26 INFO     miniengine.scheduler  Finished request 5883abc4-ae06-489e-9914-b451f275b561  (output_len=7, running=8, waiting=0)
+01:54:26 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:26 INFO     miniengine.scheduler  Enqueued request 5d1f5a36-ac58-436a-9488-c7bf1d751d21  (prompt_len=85, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Finished request 85cf8884-6722-4b8a-8fab-a8899c68738e  (output_len=4, running=7, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:26 INFO     miniengine.scheduler  Enqueued request fbdc95aa-0699-45ab-a678-49277812e77b  (prompt_len=124, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:26 INFO     miniengine.scheduler  Finished request 2b75a020-a9e6-4c8f-a879-4c244c45653b  (output_len=9, running=7, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Finished request d77fa91f-ace0-4c25-b0f3-b27c45d57be8  (output_len=7, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:26 INFO     miniengine.scheduler  Finished request 3b6393ba-1221-44bf-9bbe-6d10fbdd22ac  (output_len=4, running=7, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:26 INFO     miniengine.scheduler  Enqueued request 7fe24d85-bad2-44bc-ade6-9ebacc3f2e3d  (prompt_len=403, waiting=1)
+01:54:26 INFO     miniengine.scheduler  Enqueued request 3829c8e8-a5d5-4808-a824-c35947278fba  (prompt_len=71, waiting=2)
+01:54:26 INFO     miniengine.scheduler  Enqueued request 37a04c5d-5f7c-4aef-89a3-b2c639d5a6e6  (prompt_len=99, waiting=3)
+01:54:26 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:26 INFO     miniengine.scheduler  Admitting 3 new requests (20 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:26 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (20 pages), still prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Finished request 7fe24d85-bad2-44bc-ade6-9ebacc3f2e3d  (output_len=2, running=8, waiting=0)
+01:54:27 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:27 INFO     miniengine.scheduler  Enqueued request 6ec9cfad-2473-45d5-a9c5-c4204c95380a  (prompt_len=76, waiting=1)
+01:54:27 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Finished request 6ec9cfad-2473-45d5-a9c5-c4204c95380a  (output_len=2, running=8, waiting=0)
+01:54:27 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:27 INFO     miniengine.scheduler  Enqueued request 161012c6-4444-4fd5-ac10-45c7decdbd0d  (prompt_len=65, waiting=1)
+01:54:27 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Finished request 5d1f5a36-ac58-436a-9488-c7bf1d751d21  (output_len=8, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:27 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Enqueued request b326da06-0856-4e2c-a16d-eca3f800e96e  (prompt_len=392, waiting=1)
+01:54:27 INFO     miniengine.scheduler  Finished request 3829c8e8-a5d5-4808-a824-c35947278fba  (output_len=7, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:27 INFO     miniengine.scheduler  Admitting 1 new requests (13 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Enqueued request 04ec00a3-292c-4f2f-84a3-2673bc87a83d  (prompt_len=59, waiting=1)
+01:54:27 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (13 pages), still prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Finished request b326da06-0856-4e2c-a16d-eca3f800e96e  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:27 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Enqueued request 2ff204e8-32f4-4b13-89c1-266139fda5e0  (prompt_len=96, waiting=1)
+01:54:27 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Finished request 161012c6-4444-4fd5-ac10-45c7decdbd0d  (output_len=5, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:27 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:27 INFO     miniengine.scheduler  Enqueued request b4e53f3d-235d-4118-8734-06080d694b84  (prompt_len=140, waiting=1)
+01:54:28 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Finished request 2ff204e8-32f4-4b13-89c1-266139fda5e0  (output_len=2, running=7, waiting=1)
+01:54:28 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:28 INFO     miniengine.scheduler  Enqueued request 0ac441f8-94d6-430f-8782-1a117d3a52b0  (prompt_len=87, waiting=1)
+01:54:28 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Finished request 04ec00a3-292c-4f2f-84a3-2673bc87a83d  (output_len=4, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:28 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Enqueued request 3c9a2f26-c024-4ff1-a1b0-0e52d81894ef  (prompt_len=93, waiting=1)
+01:54:28 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Finished request 3c9a2f26-c024-4ff1-a1b0-0e52d81894ef  (output_len=2, running=8, waiting=0)
+01:54:28 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:28 INFO     miniengine.scheduler  Enqueued request dedd644a-69b9-4f73-b10e-b1f0399f8f2c  (prompt_len=93, waiting=1)
+01:54:28 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:28 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Finished request ed3e7f87-2d6e-4e89-99a9-8a133e130027  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:29 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Enqueued request 3c3c78cb-0583-4ddd-96d6-a16b5a029185  (prompt_len=123, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Finished request 0ac441f8-94d6-430f-8782-1a117d3a52b0  (output_len=10, running=8, waiting=0)
+01:54:29 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:29 INFO     miniengine.scheduler  Enqueued request d10723c4-e12a-4ea0-bf02-18163c3c0422  (prompt_len=118, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Finished request 131b3b83-e055-4be7-8591-cb83208d29a2  (output_len=32, running=7, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:29 INFO     miniengine.scheduler  Enqueued request b05e5d89-d1ce-4682-ad08-413a6c19ab5f  (prompt_len=68, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:29 INFO     miniengine.scheduler  Finished request 6a6b1241-80c5-4f8d-8aad-a05d8cac3fff  (output_len=32, running=8, waiting=0)
+01:54:29 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:29 INFO     miniengine.scheduler  Enqueued request d6dfe7d9-3505-4ada-95f4-10249f74ee1d  (prompt_len=54, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Finished request b05e5d89-d1ce-4682-ad08-413a6c19ab5f  (output_len=5, running=7, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:29 INFO     miniengine.scheduler  Enqueued request f8744767-9286-439e-8d55-b5143a12fcca  (prompt_len=243, waiting=1)
+01:54:29 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Admitting 1 new requests (8 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (8 pages), still prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Finished request d6dfe7d9-3505-4ada-95f4-10249f74ee1d  (output_len=4, running=8, waiting=0)
+01:54:30 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:30 INFO     miniengine.scheduler  Enqueued request 4b5f84ef-4b57-4f7e-b687-9e0e2a7ec2d8  (prompt_len=72, waiting=1)
+01:54:30 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Finished request fbdc95aa-0699-45ab-a678-49277812e77b  (output_len=32, running=8, waiting=0)
+01:54:30 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:30 INFO     miniengine.scheduler  Enqueued request b1af2046-e2d3-4e1c-a9bd-6f6eec78dd03  (prompt_len=144, waiting=1)
+01:54:30 INFO     miniengine.scheduler  Finished request 37a04c5d-5f7c-4aef-89a3-b2c639d5a6e6  (output_len=32, running=7, waiting=1)
+01:54:30 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:30 INFO     miniengine.scheduler  Enqueued request d5c41b21-ca18-4a99-9326-1778c71c66b4  (prompt_len=80, waiting=1)
+01:54:30 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Finished request f8744767-9286-439e-8d55-b5143a12fcca  (output_len=8, running=8, waiting=0)
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:30 INFO     miniengine.scheduler  Finished request d5c41b21-ca18-4a99-9326-1778c71c66b4  (output_len=2, running=8, waiting=0)
+01:54:30 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:30 INFO     miniengine.scheduler  Enqueued request fd5b45c8-6c4d-4ee0-9725-5e7899a423f3  (prompt_len=191, waiting=1)
+01:54:30 INFO     miniengine.scheduler  Enqueued request 114b6623-20ac-4932-a3b9-4159a521c3ec  (prompt_len=71, waiting=2)
+01:54:30 INFO     miniengine.scheduler  Finished request 4b5f84ef-4b57-4f7e-b687-9e0e2a7ec2d8  (output_len=6, running=6, waiting=2)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:30 INFO     miniengine.scheduler  Admitting 2 new requests (9 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:30 INFO     miniengine.scheduler  Enqueued request 474c7446-b9d1-456d-957d-2dcd1ce4d544  (prompt_len=133, waiting=1)
+01:54:31 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (9 pages), still prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Finished request 114b6623-20ac-4932-a3b9-4159a521c3ec  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:31 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Enqueued request b2ebe5bb-97ec-493a-a868-9a0691307372  (prompt_len=305, waiting=1)
+01:54:31 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Admitting 1 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (10 pages), still prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Finished request b4e53f3d-235d-4118-8734-06080d694b84  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:31 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Enqueued request 284b3629-c356-488a-9bc1-00ccb6a40df0  (prompt_len=99, waiting=1)
+01:54:31 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:31 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Finished request 284b3629-c356-488a-9bc1-00ccb6a40df0  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Enqueued request 2fe0f79b-9ece-4946-b18c-f82761da1016  (prompt_len=135, waiting=1)
+01:54:32 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Finished request dedd644a-69b9-4f73-b10e-b1f0399f8f2c  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Finished request 2fe0f79b-9ece-4946-b18c-f82761da1016  (output_len=2, running=8, waiting=0)
+01:54:32 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Enqueued request f60bc404-31de-4233-8147-18a6d306bf94  (prompt_len=221, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Enqueued request e811c122-fdf0-4bef-9921-b6f62dea16c4  (prompt_len=73, waiting=2)
+01:54:32 INFO     miniengine.scheduler  Admitting 2 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (10 pages), still prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Finished request b1af2046-e2d3-4e1c-a9bd-6f6eec78dd03  (output_len=16, running=8, waiting=0)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Enqueued request 3ff888e9-5abf-4b14-afa4-40c3e1ca1d70  (prompt_len=126, waiting=1)
+01:54:32 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Finished request b2ebe5bb-97ec-493a-a868-9a0691307372  (output_len=13, running=8, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Finished request 3ff888e9-5abf-4b14-afa4-40c3e1ca1d70  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:32 INFO     miniengine.scheduler  Enqueued request 1ff2007e-307a-4cb2-8e49-a87b8572bc3c  (prompt_len=251, waiting=1)
+01:54:32 INFO     miniengine.scheduler  Enqueued request 6b28c74e-c51f-45ef-ba06-5065652439d7  (prompt_len=416, waiting=2)
+01:54:32 INFO     miniengine.scheduler  Finished request 3c3c78cb-0583-4ddd-96d6-a16b5a029185  (output_len=32, running=6, waiting=2)
+01:54:32 INFO     miniengine.scheduler  Admitting 2 new requests (21 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:32 INFO     miniengine.scheduler  Enqueued request fc7ab569-88a8-49e6-b7ce-d25ef73a5494  (prompt_len=65, waiting=1)
+01:54:33 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (21 pages), still prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Finished request e811c122-fdf0-4bef-9921-b6f62dea16c4  (output_len=6, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Finished request 6b28c74e-c51f-45ef-ba06-5065652439d7  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Enqueued request ba3ec3a7-2e78-4275-8d6d-e48a8f510f2e  (prompt_len=154, waiting=1)
+01:54:33 INFO     miniengine.scheduler  Enqueued request 651e953c-ea83-4f38-b63b-9f50784ca96d  (prompt_len=215, waiting=2)
+01:54:33 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Finished request d10723c4-e12a-4ea0-bf02-18163c3c0422  (output_len=32, running=6, waiting=2)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Admitting 2 new requests (12 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Enqueued request acb8a88a-499d-4950-8b85-0440cf64bfed  (prompt_len=65, waiting=1)
+01:54:33 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (12 pages), still prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Finished request ba3ec3a7-2e78-4275-8d6d-e48a8f510f2e  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Enqueued request de74caa1-cf61-4bcc-a77b-e4932e3761d3  (prompt_len=73, waiting=1)
+01:54:33 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:33 INFO     miniengine.scheduler  Finished request fc7ab569-88a8-49e6-b7ce-d25ef73a5494  (output_len=5, running=8, waiting=0)
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Finished request 651e953c-ea83-4f38-b63b-9f50784ca96d  (output_len=4, running=8, waiting=0)
+01:54:33 INFO     miniengine.scheduler  Finished request de74caa1-cf61-4bcc-a77b-e4932e3761d3  (output_len=2, running=8, waiting=0)
+01:54:33 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Enqueued request abec2664-00f5-4700-9f52-664548233b44  (prompt_len=60, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:33 INFO     miniengine.scheduler  Enqueued request d0489e3d-59f2-4d41-bddc-9285e37b1566  (prompt_len=139, waiting=2)
+01:54:33 INFO     miniengine.scheduler  Enqueued request 7d5b7861-620e-4700-9b41-43fa6adf7ddc  (prompt_len=81, waiting=3)
+01:54:33 INFO     miniengine.scheduler  Admitting 3 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (10 pages), still prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Finished request acb8a88a-499d-4950-8b85-0440cf64bfed  (output_len=5, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Enqueued request 39f10c27-8956-4221-8908-47880e987649  (prompt_len=89, waiting=1)
+01:54:34 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:34 INFO     miniengine.scheduler  Finished request fd5b45c8-6c4d-4ee0-9725-5e7899a423f3  (output_len=32, running=8, waiting=0)
+01:54:34 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:34 INFO     miniengine.scheduler  Enqueued request 4f616751-4f13-43b5-bc42-93193ac14d21  (prompt_len=89, waiting=1)
+01:54:34 INFO     miniengine.scheduler  Finished request 474c7446-b9d1-456d-957d-2dcd1ce4d544  (output_len=32, running=7, waiting=1)
+01:54:34 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:34 INFO     miniengine.scheduler  Enqueued request 144006b6-4fca-4a1f-b54f-08644a4620a5  (prompt_len=126, waiting=1)
+01:54:35 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Finished request 4f616751-4f13-43b5-bc42-93193ac14d21  (output_len=2, running=7, waiting=1)
+01:54:35 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:35 INFO     miniengine.scheduler  Enqueued request 36885d84-dabd-4eb5-8584-c71920d0d17f  (prompt_len=72, waiting=1)
+01:54:35 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Finished request f60bc404-31de-4233-8147-18a6d306bf94  (output_len=24, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:35 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Enqueued request d9e6aee6-3614-4f37-acec-951612b1333a  (prompt_len=265, waiting=1)
+01:54:35 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Finished request 36885d84-dabd-4eb5-8584-c71920d0d17f  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:35 INFO     miniengine.scheduler  Admitting 1 new requests (9 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Enqueued request 103bdec6-14d4-4f58-a42b-739fbd736638  (prompt_len=69, waiting=1)
+01:54:35 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (9 pages), still prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Finished request d9e6aee6-3614-4f37-acec-951612b1333a  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:35 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Enqueued request f2534bc3-83e1-471f-96c3-79a015044515  (prompt_len=87, waiting=1)
+01:54:35 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:35 INFO     miniengine.scheduler  Finished request 144006b6-4fca-4a1f-b54f-08644a4620a5  (output_len=7, running=8, waiting=0)
+01:54:35 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:35 INFO     miniengine.scheduler  Enqueued request cf422ce2-07cb-422f-872d-dbd62c780339  (prompt_len=139, waiting=1)
+01:54:36 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Finished request f2534bc3-83e1-471f-96c3-79a015044515  (output_len=6, running=8, waiting=0)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:36 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Enqueued request 7473df7c-d358-4be0-8947-3b2acc974473  (prompt_len=182, waiting=1)
+01:54:36 INFO     miniengine.scheduler  Finished request 103bdec6-14d4-4f58-a42b-739fbd736638  (output_len=8, running=7, waiting=1)
+01:54:36 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:36 INFO     miniengine.scheduler  Enqueued request 465973e7-b599-4ffc-937d-6c86302b98f7  (prompt_len=57, waiting=1)
+01:54:36 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Finished request 1ff2007e-307a-4cb2-8e49-a87b8572bc3c  (output_len=32, running=8, waiting=0)
+01:54:36 INFO     miniengine.scheduler  Finished request cf422ce2-07cb-422f-872d-dbd62c780339  (output_len=7, running=8, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:36 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:36 INFO     miniengine.scheduler  Enqueued request a770106c-3582-4ef4-b716-18f5ee216a61  (prompt_len=298, waiting=1)
+01:54:36 INFO     miniengine.scheduler  Enqueued request 043e4aba-06be-415e-8157-843af5db143f  (prompt_len=88, waiting=2)
+01:54:36 INFO     miniengine.scheduler  Admitting 2 new requests (13 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:36 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (13 pages), still prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Finished request a770106c-3582-4ef4-b716-18f5ee216a61  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Finished request 043e4aba-06be-415e-8157-843af5db143f  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Enqueued request 0b6b0606-960e-4372-ac16-f0a1c979160a  (prompt_len=68, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Enqueued request adbdbf07-5607-4a7d-8269-2f0556c7ce73  (prompt_len=237, waiting=2)
+01:54:37 INFO     miniengine.scheduler  Finished request 465973e7-b599-4ffc-937d-6c86302b98f7  (output_len=6, running=6, waiting=2)
+01:54:37 INFO     miniengine.scheduler  Admitting 2 new requests (11 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Enqueued request 4bd89c16-e52a-4fa2-bb44-a5f5320a7c72  (prompt_len=63, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (11 pages), still prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Finished request adbdbf07-5607-4a7d-8269-2f0556c7ce73  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Enqueued request 074da7dc-07c1-4ec8-a531-95245ee9f3b8  (prompt_len=93, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Finished request 4bd89c16-e52a-4fa2-bb44-a5f5320a7c72  (output_len=2, running=7, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Enqueued request 530c4fd7-f2e4-4ecb-9b44-82eee19ed04e  (prompt_len=107, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Finished request abec2664-00f5-4700-9f52-664548233b44  (output_len=32, running=7, waiting=1)
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Finished request d0489e3d-59f2-4d41-bddc-9285e37b1566  (output_len=32, running=7, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Finished request 7d5b7861-620e-4700-9b41-43fa6adf7ddc  (output_len=32, running=7, waiting=1)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Enqueued request 6ce6c6e6-2d9b-44ee-8f66-a5d789c8c467  (prompt_len=78, waiting=1)
+01:54:37 INFO     miniengine.scheduler  Enqueued request 4a18a2ee-8869-448b-ae07-f96c20c741fe  (prompt_len=123, waiting=2)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:37 INFO     miniengine.scheduler  Enqueued request 5f86fae9-e34f-4eca-9ec8-ecde54624604  (prompt_len=107, waiting=3)
+01:54:37 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Admitting 3 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:37 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (10 pages), still prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Finished request 39f10c27-8956-4221-8908-47880e987649  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:38 INFO     miniengine.scheduler  Finished request 0b6b0606-960e-4372-ac16-f0a1c979160a  (output_len=6, running=8, waiting=0)
+01:54:38 INFO     miniengine.scheduler  Finished request 5f86fae9-e34f-4eca-9ec8-ecde54624604  (output_len=2, running=8, waiting=0)
+01:54:38 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Enqueued request bbbc7aee-a6ff-4d0f-a050-f36266bfb1fe  (prompt_len=156, waiting=1)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:38 INFO     miniengine.scheduler  Enqueued request cc2dafb7-46e1-4342-90d2-ebc6c9ae0f66  (prompt_len=129, waiting=2)
+01:54:38 INFO     miniengine.scheduler  Enqueued request d472ff6b-f209-4cfc-ae1d-c56cdcc58150  (prompt_len=201, waiting=3)
+01:54:38 INFO     miniengine.scheduler  Admitting 3 new requests (16 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (16 pages), still prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Finished request 4a18a2ee-8869-448b-ae07-f96c20c741fe  (output_len=7, running=8, waiting=0)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:38 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Enqueued request f394f02b-d543-490a-a2f7-3971a84004c2  (prompt_len=70, waiting=1)
+01:54:38 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Finished request cc2dafb7-46e1-4342-90d2-ebc6c9ae0f66  (output_len=7, running=8, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:38 INFO     miniengine.scheduler  Finished request f394f02b-d543-490a-a2f7-3971a84004c2  (output_len=2, running=8, waiting=0)
+01:54:38 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:38 INFO     miniengine.scheduler  Enqueued request 82ea584a-3261-4ec1-94fb-f18faaff3276  (prompt_len=92, waiting=1)
+01:54:38 INFO     miniengine.scheduler  Enqueued request 386671ad-e0cf-4f3b-a3b1-8a6ede2d21be  (prompt_len=70, waiting=2)
+01:54:38 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:38 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Finished request 074da7dc-07c1-4ec8-a531-95245ee9f3b8  (output_len=14, running=8, waiting=0)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:39 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Enqueued request 613f02d4-2475-4a8f-9542-f1072e155c15  (prompt_len=60, waiting=1)
+01:54:39 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Finished request d472ff6b-f209-4cfc-ae1d-c56cdcc58150  (output_len=12, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:39 INFO     miniengine.scheduler  Finished request 386671ad-e0cf-4f3b-a3b1-8a6ede2d21be  (output_len=5, running=8, waiting=0)
+01:54:39 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:39 INFO     miniengine.scheduler  Enqueued request afdd7b39-d901-412e-970e-e5175a0ca3a2  (prompt_len=73, waiting=1)
+01:54:39 INFO     miniengine.scheduler  Enqueued request ff4ae7a9-f4a1-48cc-ba6f-a2c9ef4b204c  (prompt_len=68, waiting=2)
+01:54:39 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Finished request ff4ae7a9-f4a1-48cc-ba6f-a2c9ef4b204c  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:39 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Enqueued request a2f3973c-4185-4eed-b752-7a2f96875791  (prompt_len=188, waiting=1)
+01:54:39 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:39 INFO     miniengine.scheduler  Finished request 613f02d4-2475-4a8f-9542-f1072e155c15  (output_len=7, running=8, waiting=0)
+01:54:39 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:39 INFO     miniengine.scheduler  Enqueued request 9c63c8e8-9f7a-4c91-ad8a-74c01f6f4f25  (prompt_len=127, waiting=1)
+01:54:39 INFO     miniengine.scheduler  Finished request afdd7b39-d901-412e-970e-e5175a0ca3a2  (output_len=6, running=7, waiting=1)
+01:54:39 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:39 INFO     miniengine.scheduler  Enqueued request 7e2f2744-ab44-4e9c-8cd7-8d05ee97fcb2  (prompt_len=69, waiting=1)
+01:54:40 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Finished request 9c63c8e8-9f7a-4c91-ad8a-74c01f6f4f25  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:40 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Enqueued request d4d1df2e-e7ca-4f09-a10c-56dffd0d5a78  (prompt_len=69, waiting=1)
+01:54:40 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Finished request 7473df7c-d358-4be0-8947-3b2acc974473  (output_len=32, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:40 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Enqueued request 6264e51f-8f03-4f38-a209-d60dc9e5d10c  (prompt_len=130, waiting=1)
+01:54:40 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Finished request d4d1df2e-e7ca-4f09-a10c-56dffd0d5a78  (output_len=5, running=8, waiting=0)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:40 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Enqueued request 48b841a0-69e8-458e-b916-842b931c6337  (prompt_len=564, waiting=1)
+01:54:40 INFO     miniengine.scheduler  Admitting 1 new requests (18 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:40 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (18 pages), still prefilling 1 requests
+01:54:41 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 1 requests
+01:54:41 INFO     miniengine.scheduler  Chunked prefill step: admitted 0 new requests (0 pages), still prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Finished request 48b841a0-69e8-458e-b916-842b931c6337  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:41 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Enqueued request 80e1bda5-0fbf-452c-a53a-01554b8dda39  (prompt_len=102, waiting=1)
+01:54:41 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Finished request 530c4fd7-f2e4-4ecb-9b44-82eee19ed04e  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:41 INFO     miniengine.scheduler  Finished request 80e1bda5-0fbf-452c-a53a-01554b8dda39  (output_len=2, running=8, waiting=0)
+01:54:41 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Enqueued request bcff1d9f-a13d-4ca4-bed9-a593ad8c8655  (prompt_len=70, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:41 INFO     miniengine.scheduler  Enqueued request 5939a954-88bf-41ad-9dfd-f87df355c305  (prompt_len=90, waiting=2)
+01:54:41 INFO     miniengine.scheduler  Finished request 6ce6c6e6-2d9b-44ee-8f66-a5d789c8c467  (output_len=32, running=6, waiting=2)
+01:54:41 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:41 INFO     miniengine.scheduler  Enqueued request 384f81f1-2239-4820-b110-18f82fe9061f  (prompt_len=255, waiting=1)
+01:54:41 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Admitting 1 new requests (8 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (8 pages), still prefilling 0 requests
+01:54:41 INFO     miniengine.scheduler  Finished request bbbc7aee-a6ff-4d0f-a050-f36266bfb1fe  (output_len=32, running=8, waiting=0)
+01:54:41 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:41 INFO     miniengine.scheduler  Enqueued request 45811623-e5d8-4b70-b9ab-c89498bab17e  (prompt_len=77, waiting=1)
+01:54:41 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Finished request bcff1d9f-a13d-4ca4-bed9-a593ad8c8655  (output_len=9, running=8, waiting=0)
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:42 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Enqueued request 91e55f6b-4a65-47d6-b5b8-d816d9b138ca  (prompt_len=83, waiting=1)
+01:54:42 INFO     miniengine.scheduler  Finished request 82ea584a-3261-4ec1-94fb-f18faaff3276  (output_len=32, running=7, waiting=1)
+01:54:42 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:42 INFO     miniengine.scheduler  Enqueued request 59e2e25d-f407-4f62-9d7f-129e81024535  (prompt_len=82, waiting=1)
+01:54:42 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Finished request 5939a954-88bf-41ad-9dfd-f87df355c305  (output_len=11, running=7, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:42 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Enqueued request 36da37f3-60c6-4fa4-b8ac-c09ecbd96cd9  (prompt_len=135, waiting=1)
+01:54:42 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:42 INFO     miniengine.scheduler  Finished request 36da37f3-60c6-4fa4-b8ac-c09ecbd96cd9  (output_len=2, running=8, waiting=0)
+01:54:42 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:42 INFO     miniengine.scheduler  Enqueued request cb0508f8-45b4-4273-bc04-632a211ca909  (prompt_len=95, waiting=1)
+01:54:43 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Finished request a2f3973c-4185-4eed-b752-7a2f96875791  (output_len=32, running=8, waiting=0)
+01:54:43 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:43 INFO     miniengine.scheduler  Enqueued request c12dee0a-b24b-4976-af9d-16ffee48d64c  (prompt_len=142, waiting=1)
+01:54:43 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Finished request 7e2f2744-ab44-4e9c-8cd7-8d05ee97fcb2  (output_len=32, running=8, waiting=0)
+01:54:43 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:43 INFO     miniengine.scheduler  Enqueued request dda57ec7-46b6-4b9f-90b3-e8efc5747163  (prompt_len=70, waiting=1)
+01:54:43 INFO     miniengine.scheduler  Finished request c12dee0a-b24b-4976-af9d-16ffee48d64c  (output_len=5, running=7, waiting=1)
+01:54:43 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:43 INFO     miniengine.scheduler  Enqueued request 8024cf1b-df78-4da4-9a82-b67aec3a9158  (prompt_len=58, waiting=1)
+01:54:43 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Finished request 6264e51f-8f03-4f38-a209-d60dc9e5d10c  (output_len=32, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:43 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:43 INFO     miniengine.scheduler  Enqueued request ae13798d-b5c5-4a0a-98d1-1a0f2dfee3c8  (prompt_len=246, waiting=1)
+01:54:44 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Admitting 1 new requests (8 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (8 pages), still prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Finished request dda57ec7-46b6-4b9f-90b3-e8efc5747163  (output_len=5, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:44 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Enqueued request efdbd65e-636e-44d6-9d24-997cb5a2365b  (prompt_len=94, waiting=1)
+01:54:44 INFO     miniengine.scheduler  Finished request 8024cf1b-df78-4da4-9a82-b67aec3a9158  (output_len=5, running=7, waiting=1)
+01:54:44 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:44 INFO     miniengine.scheduler  Enqueued request 2be57f5d-c85e-4d5a-9ac2-9a4c065d12ed  (prompt_len=166, waiting=1)
+01:54:44 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Finished request ae13798d-b5c5-4a0a-98d1-1a0f2dfee3c8  (output_len=5, running=7, waiting=1)
+01:54:44 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:44 INFO     miniengine.scheduler  Enqueued request 35dca308-01a2-4e7d-9861-57a4c1c96891  (prompt_len=186, waiting=1)
+01:54:44 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:44 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Finished request 384f81f1-2239-4820-b110-18f82fe9061f  (output_len=32, running=8, waiting=0)
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:45 INFO     miniengine.scheduler  Enqueued request 9fca789a-f0c6-4388-b359-582ca0ede51a  (prompt_len=110, waiting=1)
+01:54:45 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Finished request 45811623-e5d8-4b70-b9ab-c89498bab17e  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Enqueued request 8a347ca9-0659-49f9-8054-a18cdff1fb1c  (prompt_len=69, waiting=1)
+01:54:45 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Finished request 91e55f6b-4a65-47d6-b5b8-d816d9b138ca  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:45 INFO     miniengine.scheduler  Finished request 8a347ca9-0659-49f9-8054-a18cdff1fb1c  (output_len=6, running=8, waiting=0)
+01:54:45 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:45 INFO     miniengine.scheduler  Enqueued request c90c027d-e455-4985-a626-13e6265abbc6  (prompt_len=145, waiting=1)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:45 INFO     miniengine.scheduler  Enqueued request 60227bec-c776-49b0-9b52-3c247593afd1  (prompt_len=77, waiting=2)
+01:54:45 INFO     miniengine.scheduler  Finished request 59e2e25d-f407-4f62-9d7f-129e81024535  (output_len=32, running=6, waiting=2)
+01:54:45 INFO     miniengine.scheduler  Admitting 2 new requests (8 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:45 INFO     miniengine.scheduler  Enqueued request b1f279e8-9aeb-4ec6-8c5c-3598312d54d6  (prompt_len=233, waiting=1)
+01:54:46 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (8 pages), still prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Admitting 1 new requests (8 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (8 pages), still prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Finished request 9fca789a-f0c6-4388-b359-582ca0ede51a  (output_len=11, running=8, waiting=0)
+01:54:46 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:46 INFO     miniengine.scheduler  Enqueued request 5857b09f-0155-46e4-9545-907a9b17f2ec  (prompt_len=132, waiting=1)
+01:54:46 INFO     miniengine.scheduler  Finished request cb0508f8-45b4-4273-bc04-632a211ca909  (output_len=32, running=7, waiting=1)
+01:54:46 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:46 INFO     miniengine.scheduler  Enqueued request 9196d6b6-9218-4dd5-bc25-72a0ff2e6b4c  (prompt_len=103, waiting=1)
+01:54:46 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Finished request 60227bec-c776-49b0-9b52-3c247593afd1  (output_len=6, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:46 INFO     miniengine.scheduler  Finished request 9196d6b6-9218-4dd5-bc25-72a0ff2e6b4c  (output_len=2, running=8, waiting=0)
+01:54:46 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Enqueued request 311f0098-bcd2-45eb-8cda-c63702778234  (prompt_len=93, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:46 INFO     miniengine.scheduler  Enqueued request 4ddfbab2-f38e-450b-92d9-b87b52037a11  (prompt_len=73, waiting=2)
+01:54:46 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Finished request 311f0098-bcd2-45eb-8cda-c63702778234  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:46 INFO     miniengine.scheduler  Finished request 4ddfbab2-f38e-450b-92d9-b87b52037a11  (output_len=2, running=8, waiting=0)
+01:54:46 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:46 INFO     miniengine.scheduler  Enqueued request e6f5b7fb-7f9a-49dd-9574-7d4131915922  (prompt_len=65, waiting=1)
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:46 INFO     miniengine.scheduler  Enqueued request 08b468dd-560f-466c-b495-cd9bd1029bbb  (prompt_len=90, waiting=2)
+01:54:47 INFO     miniengine.scheduler  Admitting 2 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (6 pages), still prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Finished request 5857b09f-0155-46e4-9545-907a9b17f2ec  (output_len=7, running=8, waiting=0)
+01:54:47 INFO     miniengine.scheduler  Finished request e6f5b7fb-7f9a-49dd-9574-7d4131915922  (output_len=2, running=8, waiting=0)
+01:54:47 INFO     miniengine.scheduler  Finished request 08b468dd-560f-466c-b495-cd9bd1029bbb  (output_len=2, running=8, waiting=0)
+01:54:47 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:47 INFO     miniengine.scheduler  Enqueued request c4f40f6e-8ff1-4339-8646-26712c477887  (prompt_len=188, waiting=1)
+01:54:47 INFO     miniengine.scheduler  Enqueued request d2738a83-bf4a-4782-a299-16ad12f53884  (prompt_len=65, waiting=2)
+01:54:47 INFO     miniengine.scheduler  Enqueued request 4909c702-5383-46a7-8eeb-a3564e266eec  (prompt_len=108, waiting=3)
+01:54:47 INFO     miniengine.scheduler  Admitting 3 new requests (13 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (13 pages), still prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Finished request d2738a83-bf4a-4782-a299-16ad12f53884  (output_len=2, running=8, waiting=0)
+01:54:47 INFO     miniengine.scheduler  Finished request 4909c702-5383-46a7-8eeb-a3564e266eec  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:47 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:47 INFO     miniengine.scheduler  Enqueued request 0df7ac23-aef5-4cb9-b784-d94c44bfb1d9  (prompt_len=78, waiting=1)
+01:54:47 INFO     miniengine.scheduler  Enqueued request 0c4c9841-a2c8-4f9c-b06d-3d5440691672  (prompt_len=108, waiting=2)
+01:54:47 INFO     miniengine.scheduler  Admitting 2 new requests (7 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (7 pages), still prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Finished request efdbd65e-636e-44d6-9d24-997cb5a2365b  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:47 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:47 INFO     miniengine.scheduler  Enqueued request 1bc38a16-25d2-4a1c-98d6-0f6c9bf50a2e  (prompt_len=126, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Finished request 2be57f5d-c85e-4d5a-9ac2-9a4c065d12ed  (output_len=32, running=7, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:48 INFO     miniengine.scheduler  Enqueued request bce844c3-5bfa-48ea-bb49-694c8f3e21a1  (prompt_len=163, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Finished request 35dca308-01a2-4e7d-9861-57a4c1c96891  (output_len=32, running=7, waiting=1)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:48 INFO     miniengine.scheduler  Admitting 1 new requests (6 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Enqueued request b0102085-5c8c-4a14-bfcb-13a8affcd49f  (prompt_len=65, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (6 pages), still prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Finished request 0df7ac23-aef5-4cb9-b784-d94c44bfb1d9  (output_len=9, running=8, waiting=0)
+01:54:48 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:48 INFO     miniengine.scheduler  Enqueued request ada30701-a0c3-443e-a337-5ed5855d8ba5  (prompt_len=83, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Finished request bce844c3-5bfa-48ea-bb49-694c8f3e21a1  (output_len=4, running=7, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:48 INFO     miniengine.scheduler  Enqueued request e7a0b2b7-3419-4b2a-996e-7995e4429e98  (prompt_len=59, waiting=1)
+01:54:48 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Finished request 1bc38a16-25d2-4a1c-98d6-0f6c9bf50a2e  (output_len=7, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:48 INFO     miniengine.scheduler  Finished request e7a0b2b7-3419-4b2a-996e-7995e4429e98  (output_len=2, running=8, waiting=0)
+01:54:48 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:48 INFO     miniengine.scheduler  Enqueued request 492bcfaa-83ed-4203-84f6-52379f9ea02e  (prompt_len=71, waiting=1)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:48 INFO     miniengine.scheduler  Enqueued request d06e6ddb-855f-41f3-88e0-686f93e8ff2e  (prompt_len=210, waiting=2)
+01:54:48 INFO     miniengine.scheduler  Admitting 2 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (10 pages), still prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Finished request 492bcfaa-83ed-4203-84f6-52379f9ea02e  (output_len=2, running=8, waiting=0)
+01:54:49 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:49 INFO     miniengine.scheduler  Enqueued request 2bff91db-0657-470d-8079-f01a3cd19365  (prompt_len=264, waiting=1)
+01:54:49 INFO     miniengine.scheduler  Admitting 1 new requests (9 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (9 pages), still prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Finished request 2bff91db-0657-470d-8079-f01a3cd19365  (output_len=2, running=8, waiting=0)
+01:54:49 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:49 INFO     miniengine.scheduler  Enqueued request 41d272f4-a2ac-49e3-9d16-7cadb174043f  (prompt_len=317, waiting=1)
+01:54:49 INFO     miniengine.scheduler  Admitting 1 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (10 pages), still prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Finished request 41d272f4-a2ac-49e3-9d16-7cadb174043f  (output_len=2, running=8, waiting=0)
+01:54:49 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:49 INFO     miniengine.scheduler  Enqueued request a8383af8-5cd7-4acb-989b-2b759e6dc4b1  (prompt_len=80, waiting=1)
+01:54:49 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:49 INFO     miniengine.scheduler  Finished request c90c027d-e455-4985-a626-13e6265abbc6  (output_len=32, running=8, waiting=0)
+01:54:49 INFO     miniengine.scheduler  Finished request ada30701-a0c3-443e-a337-5ed5855d8ba5  (output_len=11, running=8, waiting=0)
+01:54:49 INFO     miniengine.scheduler  Finished request a8383af8-5cd7-4acb-989b-2b759e6dc4b1  (output_len=2, running=8, waiting=0)
+01:54:49 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:49 INFO     miniengine.scheduler  Enqueued request 778ca709-9ce9-4cde-92d3-422af74b00ec  (prompt_len=145, waiting=1)
+01:54:49 INFO     miniengine.scheduler  Enqueued request 7da45eec-ee62-49e5-8d7e-f5cad73215b2  (prompt_len=107, waiting=2)
+01:54:49 INFO     miniengine.scheduler  Enqueued request 0cb5262e-99b3-4b32-bf41-e14ac8970e65  (prompt_len=133, waiting=3)
+01:54:50 INFO     miniengine.scheduler  Finished request b1f279e8-9aeb-4ec6-8c5c-3598312d54d6  (output_len=32, running=5, waiting=3)
+01:54:50 INFO     miniengine.scheduler  Admitting 3 new requests (13 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:50 INFO     miniengine.scheduler  Enqueued request edc89eeb-2431-494a-b343-abb00a71b409  (prompt_len=114, waiting=1)
+01:54:50 INFO     miniengine.scheduler  Chunked prefill step: admitted 3 new requests (13 pages), still prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Finished request 0cb5262e-99b3-4b32-bf41-e14ac8970e65  (output_len=2, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:50 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Enqueued request 2c15bd78-023d-41cb-9e45-74a4789cce0c  (prompt_len=60, waiting=1)
+01:54:50 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Finished request 2c15bd78-023d-41cb-9e45-74a4789cce0c  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:50 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Enqueued request 2a3b0fb9-4366-4f6a-9f3b-48d2414d2abc  (prompt_len=134, waiting=1)
+01:54:50 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:50 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Finished request c4f40f6e-8ff1-4339-8646-26712c477887  (output_len=32, running=8, waiting=0)
+01:54:51 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:51 INFO     miniengine.scheduler  Enqueued request dd249915-dfd9-4b9c-95f9-5e189c0fc0a0  (prompt_len=156, waiting=1)
+01:54:51 INFO     miniengine.scheduler  Finished request 2a3b0fb9-4366-4f6a-9f3b-48d2414d2abc  (output_len=7, running=7, waiting=1)
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:51 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Enqueued request 7b22efdc-de31-4305-b479-6d64af3aebeb  (prompt_len=122, waiting=1)
+01:54:51 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Finished request 0c4c9841-a2c8-4f9c-b06d-3d5440691672  (output_len=32, running=7, waiting=1)
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:51 INFO     miniengine.scheduler  Finished request dd249915-dfd9-4b9c-95f9-5e189c0fc0a0  (output_len=2, running=7, waiting=1)
+01:54:51 INFO     miniengine.scheduler  Admitting 1 new requests (4 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:51 INFO     miniengine.scheduler  Enqueued request 9be24d56-07ad-4b5a-a4b2-436c07af1520  (prompt_len=87, waiting=1)
+01:54:51 INFO     miniengine.scheduler  Enqueued request 45089c41-1aea-4c05-ab47-fa801ea92f37  (prompt_len=218, waiting=2)
+01:54:51 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (4 pages), still prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Admitting 2 new requests (10 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (10 pages), still prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Finished request d06e6ddb-855f-41f3-88e0-686f93e8ff2e  (output_len=24, running=8, waiting=0)
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:51 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Enqueued request 93cc29fa-0a7f-4eb1-ae7a-fc8afb46fdb0  (prompt_len=140, waiting=1)
+01:54:51 INFO     miniengine.scheduler  Finished request edc89eeb-2431-494a-b343-abb00a71b409  (output_len=16, running=7, waiting=1)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:51 INFO     miniengine.scheduler  Admitting 1 new requests (5 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:51 INFO     miniengine.scheduler  Enqueued request 40cbf740-3f80-4580-896b-e97c1cf45dae  (prompt_len=64, waiting=1)
+01:54:51 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (5 pages), still prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Finished request b0102085-5c8c-4a14-bfcb-13a8affcd49f  (output_len=32, running=8, waiting=0)
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:52 INFO     miniengine.scheduler  Finished request 40cbf740-3f80-4580-896b-e97c1cf45dae  (output_len=2, running=8, waiting=0)
+01:54:52 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Enqueued request 2522c5f1-d327-4a24-bce5-7f1f916c96b9  (prompt_len=93, waiting=1)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:52 INFO     miniengine.scheduler  Enqueued request 4b9b056e-7bdf-43d0-a8ed-4a56907a0fb7  (prompt_len=127, waiting=2)
+01:54:52 INFO     miniengine.scheduler  Admitting 2 new requests (7 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Chunked prefill step: admitted 2 new requests (7 pages), still prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Finished request 4b9b056e-7bdf-43d0-a8ed-4a56907a0fb7  (output_len=2, running=8, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:52 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Enqueued request 6bc20f92-d821-450c-abe5-fdc6c932d67f  (prompt_len=126, waiting=1)
+01:54:52 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Finished request 2522c5f1-d327-4a24-bce5-7f1f916c96b9  (output_len=5, running=8, waiting=0)
+01:54:52 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:52 INFO     miniengine.scheduler  Enqueued request 672127d9-5653-4536-915d-989ed51de892  (prompt_len=70, waiting=1)
+01:54:52 INFO     miniengine.scheduler  Admitting 1 new requests (3 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:52 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (3 pages), still prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Finished request 6bc20f92-d821-450c-abe5-fdc6c932d67f  (output_len=7, running=8, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Enqueued request 580da792-828c-4878-823e-43e0dab51b69  (prompt_len=59, waiting=1)
+01:54:53 INFO     miniengine.scheduler  Admitting 1 new requests (2 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Chunked prefill step: admitted 1 new requests (2 pages), still prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Finished request 778ca709-9ce9-4cde-92d3-422af74b00ec  (output_len=32, running=8, waiting=0)
+01:54:53 INFO     miniengine.scheduler  Finished request 7da45eec-ee62-49e5-8d7e-f5cad73215b2  (output_len=32, running=8, waiting=0)
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45288 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45264 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:53 INFO     miniengine.scheduler  Finished request 93cc29fa-0a7f-4eb1-ae7a-fc8afb46fdb0  (output_len=17, running=6, waiting=0)
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45330 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:53 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Finished request 7b22efdc-de31-4305-b479-6d64af3aebeb  (output_len=32, running=5, waiting=0)
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45292 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:54 INFO     miniengine.scheduler  Finished request 9be24d56-07ad-4b5a-a4b2-436c07af1520  (output_len=32, running=4, waiting=0)
+01:54:54 INFO     miniengine.scheduler  Finished request 45089c41-1aea-4c05-ab47-fa801ea92f37  (output_len=32, running=4, waiting=0)
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45310 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45322 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:54 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:55 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:55 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:55 INFO     miniengine.scheduler  Finished request 672127d9-5653-4536-915d-989ed51de892  (output_len=32, running=2, waiting=0)
+01:54:55 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+INFO:     127.0.0.1:45302 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+01:54:55 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:55 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:55 INFO     miniengine.scheduler  Admitting 0 new requests (0 pages) with chunked prefill (chunk size=512), currently prefilling 0 requests
+01:54:55 INFO     miniengine.scheduler  Finished request 580da792-828c-4878-823e-43e0dab51b69  (output_len=32, running=1, waiting=0)
+INFO:     127.0.0.1:45280 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51140 - "GET /cache_stats HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [88270]
