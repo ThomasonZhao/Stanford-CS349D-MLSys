@@ -470,6 +470,10 @@ This satisfies the cliff criterion: the GPU-only hit rate is at least 70% on
 an early turn and below 20% by the end. Specifically, it is 72.7% on turn 1
 and 4.6% on turn 7.
 
+Screenshot of raw log output:
+
+![alt text](image.png)
+
 ### 6.2 HiRadixCache Restores Hit Rate
 
 The second required target is to re-run the same workload with a CPU pool at
@@ -503,6 +507,10 @@ The full per-turn table for blocking HiRadixCache is:
 |    5 |       32 |          9801 |             8192 |    83.6% |   778 ms |
 |    6 |       32 |         10851 |             9216 |    84.9% |   783 ms |
 |    7 |       32 |         11894 |            10240 |    86.1% |   868 ms |
+
+Screenshot of raw log output:
+
+![alt text](image-1.png)
 
 ### 6.3 End-to-End Performance
 
@@ -540,6 +548,10 @@ The overlap configuration satisfies the milestone bonus target of a real
 end-to-end win: it improves request throughput by more than 20%, generated-token
 throughput by more than 20%, and median TTFT by more than 20% on the selected
 multi-turn configuration.
+
+Screenshot of raw log output:
+
+![alt text](image-2.png)
 
 ### 6.4 Cache Operation Counters
 
@@ -657,6 +669,18 @@ dropped 570 GPU cache pages. Blocking HiRadixCache demoted 569 pages instead
 of dropping them, and overlap HiRadixCache demoted 588 pages. All three runs
 completed 200/200 requests with no reported client failures, server failures,
 OOMs, or pending async copy pages at the end.
+
+Screenshot of raw log output of GPU-only accuracy run:
+
+![alt text](image-3.png)
+
+Screenshot of raw log output of blocking HiRadixCache accuracy run:
+
+![alt text](image-4.png)
+
+Screenshot of raw log output of overlap HiRadixCache accuracy run:
+
+![alt text](image-5.png)
 
 ### 7.3 Cache Safety
 
