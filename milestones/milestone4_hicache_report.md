@@ -406,7 +406,14 @@ the async events completed without forcing synchronous waiting.
 
 ## 5. Implementation Summary
 
-The final implementation consists of the following logical pieces:
+The HiRadixCache implementation lives in `miniengine/hicache.py` (the tier-aware
+radix tree and the pinned CPU KV pool), layered beneath the existing
+`miniengine/radix_cache.py` cache interface. It is wired into the rest of the
+engine through `miniengine/engine.py` (cache construction, prefix lookup/insert,
+and the demote/promote calls), the scheduler in `miniengine/scheduler.py` (the
+lock-reference around prefill admission), and the CLI flags in
+`miniengine/__main__.py`. The final implementation consists of the following
+logical pieces:
 
 | Component              | Responsibility                                                                                   |
 | ---------------------- | ------------------------------------------------------------------------------------------------ |
